@@ -1,45 +1,30 @@
-import os
-import re
-from fastapi import FastAPI, Request, Header, HTTPException
-from fastapi.responses import PlainTextResponse
-import pandas as pd
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
+import os, re, logging
 from datetime import datetime
 import zoneinfo
+import pandas as pd
 
-import logging
+from fastapi import FastAPI, Request, Header, HTTPException
+from fastapi.responses import PlainTextResponse, JSONResponse
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
+
+# ---------- logging ----------
 logging.basicConfig(level=logging.INFO)
+log = logging.getLogger("ae-bot")
 
-# --- Config ---
+# ---------- config ----------
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
-
 if not TOKEN:
     raise RuntimeError("Missing TELEGRAM_TOKEN env var")
 
-application = Application.builder().token(TOKEN).build()
-
-from fastapi import BackgroundTasks
-
-@app.on_event("startup")
-async def on_startup():
-    await application.initialize()
-    logging.info("PTB application initialized")
-
-@app.on_event("shutdown")
-async def on_shutdown():
-    await application.shutdown()
-    logging.info("PTB application shutdown")
-
-# --- Data loading ---
+# ---------- data ----------
 def load_df():
-    path = os.getenv("PEOPLE_CSV_PATH", "ars_2025_people.csv")
+    path = os.getenv("PEOPLE_CSV_PATH", "data/ars_2025_people.csv")
     try:
         df = pd.read_csv(path, engine="python", on_bad_lines="skip")
     except Exception:
         df = pd.read_csv(path, on_bad_lines="skip")
-    # auto-rename распространённых заголовков
     rename_map = {
         'name':'Name','person':'Name','full_name':'Name',
         'where to meet':'Where to Meet','where':'Where to Meet','location':'Where to Meet',
@@ -66,13 +51,8 @@ def unique_locations(limit=60):
     locs = sorted({x.strip() for x in DF["Where to Meet"].tolist() if x and x.strip()})
     return locs[:limit]
 
-# --- Bot logic ---
-app = FastAPI()
-application = Application.builder().token(TOKEN).build()
-
 def person_card(row):
-    parts = []
-    parts.append(f"*{row.get('Name','').strip()}*")
+    parts = [row.get('Name','').strip()]
     inst = row.get('Institution','').strip()
     role = row.get('Festival Role','').strip() if 'Festival Role' in row else ''
     if inst or role:
@@ -84,29 +64,17 @@ def person_card(row):
     if row.get('Conversation Tip',''):
         parts.append(f"💬 {row['Conversation Tip']}")
     if row.get('Bio',''):
-        parts.append(f"ℹ️ {row['Bio'][:400]}{'…' if len(row['Bio'])>400 else ''}")
+        txt = row['Bio']
+        parts.append(f"ℹ️ {txt[:400]}{'…' if len(txt)>400 else ''}")
     if row.get('Institution Link',''):
-        parts.append(f"{row['Institution Link']}")
+        parts.append(row['Institution Link'])
     return "\n".join(parts)
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    kb = [
-        [InlineKeyboardButton("🔎 Find by name", switch_inline_query_current_chat="")],
-        [InlineKeyboardButton("📍 Browse by location", callback_data="loc:menu")],
-        [InlineKeyboardButton("🕒 Available now (beta)", callback_data="time:now")]
-    ]
-    await update.message.reply_text(
-        "Привет! Пришли имя или используй кнопки ниже.",
-        reply_markup=InlineKeyboardMarkup(kb)
-    )
-
 def search_by_name(query, limit=10):
-    mask = DF["Name"].str.contains(re.escape(query), case=False, na=False)
-    return DF[mask].head(limit)
+    return DF[DF["Name"].str.contains(re.escape(query), case=False, na=False)].head(limit)
 
 def filter_by_location(loc, limit=40):
-    mask = DF["Where to Meet"].str.contains(re.escape(loc), case=False, na=False)
-    return DF[mask].head(limit)
+    return DF[DF["Where to Meet"].str.contains(re.escape(loc), case=False, na=False)].head(limit)
 
 def vienna_now():
     tz = zoneinfo.ZoneInfo("Europe/Vienna")
@@ -116,10 +84,6 @@ def is_available_now(attendance_text: str) -> bool:
     if not attendance_text:
         return False
     now = vienna_now()
-    wk = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"][now.weekday()]
-    if wk.lower() in attendance_text.lower():
-        return True
-    # интервалы вида 14:00–16:00
     for a,b in re.findall(r'(\d{1,2}[:.]\d{2})\s*[-–]\s*(\d{1,2}[:.]\d{2})', attendance_text):
         try:
             h1,m1 = map(int,a.replace('.',':').split(':'))
@@ -132,7 +96,33 @@ def is_available_now(attendance_text: str) -> bool:
             pass
     return False
 
-async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ---------- FastAPI + PTB ----------
+app = FastAPI()
+application = Application.builder().token(TOKEN).build()
+
+@app.on_event("startup")
+async def on_startup():
+    await application.initialize()
+    log.info("PTB initialized")
+
+@app.on_event("shutdown")
+async def on_shutdown():
+    await application.shutdown()
+    log.info("PTB shutdown")
+
+async def start(update, context: ContextTypes.DEFAULT_TYPE):
+    kb = [
+        [InlineKeyboardButton("🔎 Find by name", switch_inline_query_current_chat="")],
+        [InlineKeyboardButton("📍 Browse by location", callback_data="loc:menu")],
+        [InlineKeyboardButton("🕒 Available now (beta)", callback_data="time:now")],
+    ]
+    await update.message.reply_text(
+        "Привет! Пришли имя или используй кнопки ниже.",
+        reply_markup=InlineKeyboardMarkup(kb),
+        disable_web_page_preview=True
+    )
+
+async def on_text(update, context: ContextTypes.DEFAULT_TYPE):
     q = (update.message.text or "").strip()
     if not q:
         return
@@ -141,10 +131,9 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Ничего не нашла. Попробуй другое имя.")
         return
     for _, row in res.iterrows():
-        # await update.message.reply_markdown(person_card(row))
         await update.message.reply_text(person_card(row), disable_web_page_preview=True)
 
-async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def on_cb(update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
     data = q.data or ""
@@ -160,24 +149,14 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("loc:"):
         loc = data[4:]
         res = filter_by_location(loc)
-        if res.empty:
-            await q.edit_message_text(f"Никого не нашла в «{loc}».")
-            return
         await q.edit_message_text(f"В «{loc}»:")
         for _, row in res.iterrows():
-            # await q.message.reply_markdown(person_card(row))
             await q.message.reply_text(person_card(row), disable_web_page_preview=True)
     elif data == "time:now":
         subset = DF[DF["Attendance"].apply(is_available_now)]
-        if subset.empty:
-            await q.edit_message_text("Сейчас никого не вижу по расписанию (или расписание не распознано).")
-            return
-        await q.edit_message_text("Доступны сейчас:")
+        await q.edit_message_text("Доступны сейчас:" if not subset.empty else "Сейчас никого не вижу по расписанию.")
         for _, row in subset.iterrows():
-            # await q.message.reply_markdown(person_card(row))
             await q.message.reply_text(person_card(row), disable_web_page_preview=True)
-    else:
-        await q.edit_message_text("Ок.")
 
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CallbackQueryHandler(on_cb))
@@ -189,9 +168,18 @@ def root():
 
 @app.post("/webhook")
 async def webhook(request: Request, x_telegram_bot_api_secret_token: str | None = Header(default=None)):
+    # Проверяем секрет от Telegram (если указали при setWebhook)
     if WEBHOOK_SECRET and x_telegram_bot_api_secret_token != WEBHOOK_SECRET:
+        log.warning("Bad webhook secret: got=%s", x_telegram_bot_api_secret_token)
         raise HTTPException(status_code=403, detail="bad secret")
-    data = await request.json()
-    update = Update.de_json(data, application.bot)
-    await application.process_update(update)
-    return {"status":"ok"}
+    try:
+        data = await request.json()
+        log.info("update %s", data.get("update_id"))
+        update = Update.de_json(data, application.bot)
+        await application.process_update(update)
+        return JSONResponse({"status":"ok"})
+    except Exception as e:
+        # Логируем весь стектрейс, чтобы понять первопричину
+        log.exception("webhook error: %s", e)
+        # Возвращаем 200, чтобы Telegram не забивал очередь ретраями
+        return JSONResponse({"status":"error"}, status_code=200)
