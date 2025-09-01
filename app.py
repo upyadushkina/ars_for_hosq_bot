@@ -8,12 +8,29 @@ from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQu
 from datetime import datetime
 import zoneinfo
 
+import logging
+logging.basicConfig(level=logging.INFO)
+
 # --- Config ---
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
 
 if not TOKEN:
     raise RuntimeError("Missing TELEGRAM_TOKEN env var")
+
+application = Application.builder().token(TOKEN).build()
+
+from fastapi import BackgroundTasks
+
+@app.on_event("startup")
+async def on_startup():
+    await application.initialize()
+    logging.info("PTB application initialized")
+
+@app.on_event("shutdown")
+async def on_shutdown():
+    await application.shutdown()
+    logging.info("PTB application shutdown")
 
 # --- Data loading ---
 def load_df():
@@ -124,7 +141,8 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Ничего не нашла. Попробуй другое имя.")
         return
     for _, row in res.iterrows():
-        await update.message.reply_markdown(person_card(row))
+        # await update.message.reply_markdown(person_card(row))
+        await update.message.reply_text(person_card(row), disable_web_page_preview=True)
 
 async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
@@ -147,7 +165,8 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         await q.edit_message_text(f"В «{loc}»:")
         for _, row in res.iterrows():
-            await q.message.reply_markdown(person_card(row))
+            # await q.message.reply_markdown(person_card(row))
+            await q.message.reply_text(person_card(row), disable_web_page_preview=True)
     elif data == "time:now":
         subset = DF[DF["Attendance"].apply(is_available_now)]
         if subset.empty:
@@ -155,7 +174,8 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         await q.edit_message_text("Доступны сейчас:")
         for _, row in subset.iterrows():
-            await q.message.reply_markdown(person_card(row))
+            # await q.message.reply_markdown(person_card(row))
+            await q.message.reply_text(person_card(row), disable_web_page_preview=True)
     else:
         await q.edit_message_text("Ок.")
 
