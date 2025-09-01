@@ -1,0 +1,7 @@
+fastapi==0.110.*
+uvicorn==0.29.*
+python-telegram-bot==21.*
+pandas==2.2.*
+python-dateutil
+pytz
+tzdata
