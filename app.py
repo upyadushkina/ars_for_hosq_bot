@@ -13,6 +13,9 @@ from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQu
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("ae-bot")
 
+# Create FastAPI app EARLY so decorators below can reference it
+app = FastAPI()
+
 # =============================================
 #            A) PEOPLE (ars_2025_people.csv)
 # =============================================
@@ -220,7 +223,6 @@ def parse_user_time_str(s: str):
 # =============================================
 #                 BOT UI / HANDLERS
 # =============================================
-app = FastAPI()
 application = Application.builder().token(os.getenv("TELEGRAM_TOKEN")).build()
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
 
