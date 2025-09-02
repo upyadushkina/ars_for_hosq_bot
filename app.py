@@ -33,77 +33,95 @@ def load_people_df():
 
 PEOPLE_DF = load_people_df()
 
-ALPHABET_ORDER = list("ABCDEFGHIJKLMNOPQRSTUVWXYZАБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ")
+# ---------- helpers ----------
+ALPHABET_ORDER = list("АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ") + list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+
+def get_alpha_char(s: str) -> str | None:
+    m = re.search("[A-Za-zА-Яа-яЁё]", s or "")
+    if not m:
+        return None
+    return m.group(0).upper()
 
 def split_name(name: str):
-    name = str(name or "").strip()
-    if not name:
-        return ("", "")
-    parts = re.split(r"\s+", name)
-    first = parts[0]
+    parts = re.split("[\s\-]+", (name or "").strip())
+    parts = [p for p in parts if p]
+    first = parts[0] if parts else ""
     last = parts[-1] if len(parts) > 1 else ""
-    return (first, last)
+    return first, last
 
-def unique_letters() -> List[str]:
+def unique_letters():
     letters = set()
-    for v in PEOPLE_DF.get("Name", pd.Series(dtype=str)).fillna(""):
-        first, last = split_name(v)
-        for token in [first, last]:
-            if token:
-                letters.add(token[0].upper())
-    letters = [ch for ch in ALPHABET_ORDER if ch in letters]
-    return letters
+    for _, row in DF.iterrows():
+        first, last = split_name(row.get("Name", ""))
+        for token in (first, last):
+            ch = get_alpha_char(token)
+            if ch:
+                letters.add(ch)
+    ordered = [ch for ch in ALPHABET_ORDER if ch in letters]
+    extra = sorted([ch for ch in letters if ch not in ALPHABET_ORDER])
+    return ordered + extra
 
 def people_by_letter(letter: str, limit=40):
-    letter = (letter or "").upper()
+    def starts_with(letter: str, token: str) -> bool:
+        if not token:
+            return False
+        return token.lower().startswith(letter.lower())
     mask_rows = []
-    for idx, v in PEOPLE_DF.get("Name", pd.Series(dtype=str)).fillna("").items():
-        first, last = split_name(v)
-        if first.upper().startswith(letter) or last.upper().startswith(letter):
+    for idx, row in DF.iterrows():
+        first, last = split_name(row.get("Name", ""))
+        if starts_with(letter, first) or starts_with(letter, last):
             mask_rows.append(idx)
-    subset = PEOPLE_DF.iloc[mask_rows].head(limit)
+    subset = DF.iloc[mask_rows].head(limit)
     return subset
 
-def person_card(row_or_name):
-    if isinstance(row_or_name, str):
-        name = row_or_name
-        cand = PEOPLE_DF[PEOPLE_DF["Name"].fillna("").str.strip().str.lower() == str(name).strip().lower()]
-        if cand.empty:
-            # самое близкое совпадение
-            cand = PEOPLE_DF.iloc[[0]] if not PEOPLE_DF.empty else pd.DataFrame()
-        row = cand.iloc[0] if not cand.empty else {}
-    else:
-        row = row_or_name
-    name = str(row.get('Name','')).strip()
-    role = str(row.get('Role', row.get('Festival Role',''))).strip()
-    inst = str(row.get('Institution','')).strip()
-    bio = str(row.get('Bio','')).strip()
-    tip = str(row.get('Conversation Tip','')).strip()
-    link = str(row.get('Institution Link','')).strip()
-    lines = [f"👤 {name}"]
-    if role: lines.append(f"🧭 Role: {role}")
-    if inst: lines.append(f"🏛️ Institution: {inst}")
-    if bio:  lines.append(f"📝 Bio: {bio}")
-    if tip:  lines.append(f"💬 Tip: {tip}")
-    if link: lines.append(f"🔗 {link}")
-    return "\n".join(lines)
+def person_card(row):
+    parts = [row.get('Name','').strip()]
+    inst = row.get('Institution','').strip()
+    role = row.get('Festival Role','').strip() if 'Festival Role' in row else ''
+    if inst or role:
+        parts.append(" — ".join([x for x in [role, inst] if x]))
+    if row.get('Where to Meet',''):
+        parts.append(f"📍 {row['Where to Meet']}")
+    if row.get('Attendance',''):
+        parts.append(f"🕒 {row['Attendance']}")
+    if row.get('Conversation Tip',''):
+        parts.append(f"💬 {row['Conversation Tip']}")
+    if row.get('Bio',''):
+        txt = row['Bio']
+        parts.append(f"ℹ️ {txt[:400]}{'…' if len(txt)>400 else ''}")
+    if row.get('Institution Link',''):
+        parts.append(row['Institution Link'])
+    return "\n".join(parts)
 
-def _ratio(a,b):
-    try:
-        return SequenceMatcher(None, str(a).lower(), str(b).lower()).ratio()
-    except Exception:
-        return 0.0
+def search_by_name(query, limit=10):
+    return DF[DF["Name"].str.contains(re.escape(query), case=False, na=False)].head(limit)
 
-def search_by_name(query, limit=20):
-    query = (query or "").strip()
-    if not query:
-        return PEOPLE_DF.head(limit)
+def suggest_by_name(query: str, n: int = 5):
+    q = (query or "").strip().lower()
+    if not q:
+        return DF.head(0)
     scores = []
-    for idx, name in PEOPLE_DF.get("Name", pd.Series(dtype=str)).fillna("").items():
-        scores.append((idx, _ratio(name, query)))
-    scores.sort(key=lambda x: x[1], reverse=True)
-    top_idx = [i for i,_ in scores[: max(limit, 1)]]
-    return PEOPLE_DF.loc[top_idx]
+    for idx, row in DF.iterrows():
+        name = (row.get("Name", "") or "").strip()
+        if not name:
+            continue
+        first, last = split_name(name)
+        candidates = [name.lower()]
+        if first:
+            candidates.append(first.lower())
+        if last:
+            candidates.append(last.lower())
+        best = max(SequenceMatcher(None, q, c).ratio() for c in candidates)
+        scores.append((best, idx))
+    scores.sort(key=lambda x: x[0], reverse=True)
+    picked = [idx for score, idx in scores if score >= 0.45][:n]
+    if len(picked) < n:
+        for score, idx in scores:
+            if idx not in picked:
+                picked.append(idx)
+            if len(picked) == n:
+                break
+    return DF.loc[picked] if picked else DF.head(0)
 
 # =============================================
 #        B) MEET SLOTS (meet_slots.csv)
