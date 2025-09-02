@@ -347,6 +347,7 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.edit_message_text("Выбери тему:", reply_markup=InlineKeyboardMarkup(rows))
         return
 
+    # ТЕМА
     if data.startswith("ms:topic#"):
         try:
             idx = int(data.split("#",1)[1])
@@ -355,8 +356,16 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
         topics = meet_list_unique(MEET_DF["topic"])
         if 0 <= idx < len(topics):
             topic = topics[idx]
-            rows = MEET_DF.loc[MEET_DF["topic"]==topic]
-            await q.edit_message_text(f"Тема: {topic}
+            rows = MEET_DF.loc[MEET_DF["topic"] == topic]
+            await q.edit_message_text(
+                f"Тема: {topic}\n\n{meet_format_rows(rows)}",
+                disable_web_page_preview=True
+            )
+        else:
+            await q.edit_message_text("Ошибка выбора темы")
+        return
+
+    
 
 {meet_format_rows(rows)}", disable_web_page_preview=True)
         else:
@@ -376,6 +385,7 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.edit_message_text("Выбери ивент:", reply_markup=InlineKeyboardMarkup(rows))
         return
 
+    # ИВЕНТ
     if data.startswith("ms:event#"):
         try:
             idx = int(data.split("#",1)[1])
@@ -384,8 +394,15 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
         events = meet_list_unique(MEET_DF["event_name"])
         if 0 <= idx < len(events):
             ev = events[idx]
-            rows = MEET_DF.loc[MEET_DF["event_name"]==ev]
-            await q.edit_message_text(f"Ивент: {ev}
+            rows = MEET_DF.loc[MEET_DF["event_name"] == ev]
+            await q.edit_message_text(
+                f"Ивент: {ev}\n\n{meet_format_rows(rows)}",
+                disable_web_page_preview=True
+            )
+        else:
+            await q.edit_message_text("Ошибка выбора ивента")
+        return
+
 
 {meet_format_rows(rows)}", disable_web_page_preview=True)
         else:
@@ -405,6 +422,7 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.edit_message_text("Где ты сейчас?", reply_markup=InlineKeyboardMarkup(rows))
         return
 
+    # ЛОКАЦИЯ
     if data.startswith("ms:loc#"):
         try:
             idx = int(data.split("#",1)[1])
@@ -413,8 +431,15 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
         locs = meet_list_unique(MEET_DF["location"])
         if 0 <= idx < len(locs):
             loc = locs[idx]
-            rows = MEET_DF.loc[MEET_DF["location"]==loc]
-            await q.edit_message_text(f"Локация: {loc}
+            rows = MEET_DF.loc[MEET_DF["location"] == loc]
+            await q.edit_message_text(
+                f"Локация: {loc}\n\n{meet_format_rows(rows)}",
+                disable_web_page_preview=True
+            )
+        else:
+            await q.edit_message_text("Ошибка выбора локации")
+        return
+
 
 {meet_format_rows(rows)}", disable_web_page_preview=True)
         else:
