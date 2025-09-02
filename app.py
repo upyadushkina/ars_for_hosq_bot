@@ -1,4 +1,3 @@
-
 import os, re, logging
 from datetime import datetime
 from typing import List
@@ -7,48 +6,29 @@ from difflib import SequenceMatcher
 
 from fastapi import FastAPI, Request, Header, HTTPException
 from fastapi.responses import PlainTextResponse, JSONResponse
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 
 # ---------- logging ----------
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("ae-bot")
 
-# ---------- config ----------
-TOKEN = os.getenv("TELEGRAM_TOKEN")
-WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
-if not TOKEN:
-    raise RuntimeError("Missing TELEGRAM_TOKEN env var")
-
-# Инициализация/старт PTB при запуске FastAPI и корректное завершение
-@app.on_event("startup")
-async def on_startup():
-    await application.initialize()
-    await application.start()
-
-@app.on_event("shutdown")
-async def on_shutdown():
-    await application.stop()
-    await application.shutdown()
-
 # =============================================
 #            A) PEOPLE (ars_2025_people.csv)
 # =============================================
 PEOPLE_CSV_PATH = os.getenv("PEOPLE_CSV", "/mnt/data/ars_2025_people.csv")
-DF = pd.DataFrame()
 
 def load_people_df():
-    global DF
     try:
-        DF = pd.read_csv(PEOPLE_CSV_PATH)
-        # Ensure 'Name' column exists
-        if "Name" not in DF.columns and len(DF.columns) > 0:
-            DF.rename(columns={DF.columns[0]: "Name"}, inplace=True)
+        df = pd.read_csv(PEOPLE_CSV_PATH)
+        if "Name" not in df.columns and len(df.columns) > 0:
+            df.rename(columns={df.columns[0]: "Name"}, inplace=True)
+        return df
     except Exception as e:
         log.warning("Failed to load people CSV: %s", e)
-        DF = pd.DataFrame(columns=["Name", "Institution", "Festival Role", "Where to Meet", "Attendance"])
+        return pd.DataFrame(columns=["Name", "Institution", "Festival Role", "Where to Meet", "Attendance"])  
 
-load_people_df()
+PEOPLE_DF = load_people_df()
 
 ALPHABET_ORDER = list("ABCDEFGHIJKLMNOPQRSTUVWXYZАБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ")
 
@@ -63,7 +43,7 @@ def split_name(name: str):
 
 def unique_letters() -> List[str]:
     letters = set()
-    for v in DF.get("Name", pd.Series(dtype=str)).fillna(""):
+    for v in PEOPLE_DF.get("Name", pd.Series(dtype=str)).fillna(""):
         first, last = split_name(v)
         for token in [first, last]:
             if token:
@@ -78,18 +58,19 @@ def letters_keyboard():
         row.append(InlineKeyboardButton(ch, callback_data=f"name:letter:{ch}"))
         if len(row) == 8:
             rows.append(row); row = []
-    if row: rows.append(row)
+    if row:
+        rows.append(row)
     rows.append([InlineKeyboardButton("⬅️ Назад", callback_data="back:home")])
     return InlineKeyboardMarkup(rows)
 
 def people_by_letter(letter: str, limit=40):
     letter = (letter or "").upper()
     mask_rows = []
-    for idx, v in DF.get("Name", pd.Series(dtype=str)).fillna("").items():
+    for idx, v in PEOPLE_DF.get("Name", pd.Series(dtype=str)).fillna("").items():
         first, last = split_name(v)
         if first.upper().startswith(letter) or last.upper().startswith(letter):
             mask_rows.append(idx)
-    subset = DF.iloc[mask_rows].head(limit)
+    subset = PEOPLE_DF.iloc[mask_rows].head(limit)
     return subset
 
 def person_card(row):
@@ -113,19 +94,19 @@ def _ratio(a,b):
 def search_by_name(query, limit=20):
     query = (query or "").strip()
     if not query:
-        return DF.head(limit)
+        return PEOPLE_DF.head(limit)
     scores = []
-    for idx, name in DF.get("Name", pd.Series(dtype=str)).fillna("").items():
+    for idx, name in PEOPLE_DF.get("Name", pd.Series(dtype=str)).fillna("").items():
         scores.append((idx, _ratio(name, query)))
     scores.sort(key=lambda x: x[1], reverse=True)
     top_idx = [i for i,_ in scores[: max(limit, 1)]]
-    return DF.loc[top_idx]
+    return PEOPLE_DF.loc[top_idx]
 
 # =============================================
 #        B) MEET SLOTS (meet_slots.csv)
 # =============================================
-from zoneinfo import ZoneInfo as _ZoneInfo
 import pandas as _pd
+from zoneinfo import ZoneInfo as _ZoneInfo
 
 MEET_CSV_PATH = os.getenv("MEET_SLOTS_CSV", "/mnt/data/meet_slots.csv")
 MEET_TZ = _ZoneInfo("Europe/Vienna")
@@ -134,9 +115,9 @@ MEET_YEAR = 2025
 def _meet_norm_key(s: str) -> str:
     if not isinstance(s, str): return ""
     s = s.strip().lower()
-    s = re.sub(r'\s+', ' ', s)
-    s = re.sub(r'[^a-z0-9]+', '-', s)
-    s = re.sub(r'-+', '-', s).strip('-')
+    s = re.sub(r"\s+", " ", s)
+    s = re.sub(r"[^a-z0-9]+", "-", s)
+    s = re.sub(r"-+", "-", s).strip("-")
     return s
 
 def _meet_parse_when_to_meet(s: str):
@@ -208,7 +189,7 @@ def meet_format_rows(rows, limit=40):
             f"📍 {loc}" if loc else "",
             f"🕒 {date} {span}".strip()
         ])
-        parts.append(re.sub(r'\s+·\s+', ' · ', line).strip(" ·"))
+        parts.append(re.sub(r"\s+·\s+", " · ", line).strip(" ·"))
     if len(rows) > limit:
         parts.append(f"\n… и ещё {len(rows)-limit}")
     return "\n\n".join(parts)
@@ -239,39 +220,34 @@ def parse_user_time_str(s: str):
 # =============================================
 #                 BOT UI / HANDLERS
 # =============================================
-def main_menu_keyboard():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔎 Поиск по имени", callback_data="name:menu")],
-        [InlineKeyboardButton("📍 По локации (meet slots)", callback_data="ms:loc_menu")],
-        [InlineKeyboardButton("🕒 По времени (meet slots)", callback_data="ms:time_menu")],
-        [InlineKeyboardButton("🏷️ По теме (meet slots)", callback_data="ms:topic_menu")],
-        [InlineKeyboardButton("🎫 По ивенту (meet slots)", callback_data="ms:event_menu")],
-    ])
-
-def name_menu_keyboard():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔤 Имена в алфавитном порядке", callback_data="name:alpha")],
-        [InlineKeyboardButton("⌨️ Введите имя", callback_data="name:typing")],
-        [InlineKeyboardButton("⬅️ Назад", callback_data="back:home")],
-    ])
-
-# Single app and application
 app = FastAPI()
 application = Application.builder().token(os.getenv("TELEGRAM_TOKEN")).build()
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
 
-# ---------- COMMANDS ----------
+@app.on_event("startup")
+async def on_startup():
+    await application.initialize()
+    await application.start()
+
+@app.on_event("shutdown")
+async def on_shutdown():
+    await application.stop()
+    await application.shutdown()
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Главное меню:", reply_markup=main_menu_keyboard())
+    await update.message.reply_text(
+        "Главное меню:",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔎 Поиск по имени", callback_data="name:menu")],
+            [InlineKeyboardButton("📍 По локации (meet slots)", callback_data="ms:loc_menu")],
+            [InlineKeyboardButton("🕒 По времени (meet slots)", callback_data="ms:time_menu")],
+            [InlineKeyboardButton("🏷️ По теме (meet slots)", callback_data="ms:topic_menu")],
+            [InlineKeyboardButton("🎫 По ивенту (meet slots)", callback_data="ms:event_menu")],
+        ])
+    )
 
-async def ms_time(update, context: ContextTypes.DEFAULT_TYPE):
-    kb = ReplyKeyboardMarkup([[KeyboardButton("Сейчас")]], resize_keyboard=True, one_time_keyboard=True)
-    await update.message.reply_text("Введи время (форматы: 'Сейчас', 'HH:MM', 'DD.MM HH:MM')", reply_markup=kb)
-    context.user_data["ms_expect_time"] = True
-
-# ---------- TEXT ROUTER ----------
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # name typing mode
+    # --- ввод имени ---
     if context.user_data.get("expect_name_typing"):
         q = (update.message.text or "").strip()
         res = search_by_name(q, limit=20)
@@ -281,36 +257,44 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for _, row in res.iterrows():
                 await update.message.reply_text(person_card(row), disable_web_page_preview=True)
         context.user_data["expect_name_typing"] = False
-        await update.message.reply_text("Вернуться в меню?", reply_markup=main_menu_keyboard())
+        await update.message.reply_text("Вернуться в меню?", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Назад", callback_data="back:home")]]))
         return
 
-    # meet time input mode
+    # --- ввод времени ---
     if context.user_data.get("ms_expect_time"):
         txt = (update.message.text or "").strip()
         qdt = parse_user_time_str(txt)
         if not qdt:
             await update.message.reply_text("Не понял время. Примеры: 20:15, 06.09 21:00, Сейчас")
             return
-        subset = MEET_DF[(MEET_DF["start_dt"].notna()) & (MEET_DF["end_dt"].notna()) &
-                         (MEET_DF["start_dt"] <= qdt) & (qdt < MEET_DF["end_dt"])]
+        subset = MEET_DF[(MEET_DF["start_dt"].notna()) & (MEET_DF["end_dt"].notna()) & (MEET_DF["start_dt"] <= qdt) & (qdt < MEET_DF["end_dt"]) ]
         await update.message.reply_text(meet_format_rows(subset), disable_web_page_preview=True)
         context.user_data["ms_expect_time"] = False
-        await update.message.reply_text("Вернуться в меню?", reply_markup=main_menu_keyboard())
+        await update.message.reply_text("Вернуться в меню?", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Назад", callback_data="back:home")]]))
         return
 
-# ---------- CALLBACKS ----------
 async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
     data = q.data or ""
 
     if data == "back:home":
-        await q.edit_message_text("Главное меню:", reply_markup=main_menu_keyboard())
+        await q.edit_message_text("Главное меню:", reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔎 Поиск по имени", callback_data="name:menu")],
+            [InlineKeyboardButton("📍 По локации (meet slots)", callback_data="ms:loc_menu")],
+            [InlineKeyboardButton("🕒 По времени (meet slots)", callback_data="ms:time_menu")],
+            [InlineKeyboardButton("🏷️ По теме (meet slots)", callback_data="ms:topic_menu")],
+            [InlineKeyboardButton("🎫 По ивенту (meet slots)", callback_data="ms:event_menu")],
+        ]))
         return
 
-    # --- name ---
+    # --- имя ---
     if data == "name:menu":
-        await q.edit_message_text("Как искать по имени?", reply_markup=name_menu_keyboard())
+        await q.edit_message_text("Как искать по имени?", reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔤 Имена в алфавитном порядке", callback_data="name:alpha")],
+            [InlineKeyboardButton("⌨️ Введите имя", callback_data="name:typing")],
+            [InlineKeyboardButton("⬅️ Назад", callback_data="back:home")],
+        ]))
         return
 
     if data == "name:alpha":
@@ -323,7 +307,6 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.edit_message_text(f"Имена на букву {letter}:")
         for _, row in res.iterrows():
             await q.message.reply_text(person_card(row), disable_web_page_preview=True)
-        await q.message.reply_text("Вернуться в меню?", reply_markup=main_menu_keyboard())
         return
 
     if data == "name:typing":
@@ -331,7 +314,7 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.edit_message_text("Введи имя/фамилию для поиска:")
         return
 
-    # --- meet slots flows ---
+    # --- meet: время ---
     if data == "ms:time_menu":
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("Сейчас", callback_data="ms:time:now")],
@@ -343,12 +326,12 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "ms:time:now":
         now_dt = datetime.now(MEET_TZ)
-        subset = MEET_DF[(MEET_DF["start_dt"].notna()) & (MEET_DF["end_dt"].notna()) &
-                         (MEET_DF["start_dt"] <= now_dt) & (now_dt < MEET_DF["end_dt"])]
+        subset = MEET_DF[(MEET_DF["start_dt"].notna()) & (MEET_DF["end_dt"].notna()) & (MEET_DF["start_dt"] <= now_dt) & (now_dt < MEET_DF["end_dt"]) ]
         await q.edit_message_text("Доступны сейчас:\n\n" + meet_format_rows(subset))
         context.user_data["ms_expect_time"] = False
         return
 
+    # --- meet: темы ---
     if data == "ms:topic_menu":
         topics = meet_list_unique(MEET_DF["topic"])
         rows, row = [], []
@@ -367,6 +350,7 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.edit_message_text(f"Тема: {topic}\n\n{meet_format_rows(rows)}", disable_web_page_preview=True)
         return
 
+    # --- meet: ивенты ---
     if data == "ms:event_menu":
         events = meet_list_unique(MEET_DF["event_name"])
         rows, row = [], []
@@ -385,6 +369,7 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.edit_message_text(f"Ивент: {ev}\n\n{meet_format_rows(rows)}", disable_web_page_preview=True)
         return
 
+    # --- meet: локации ---
     if data == "ms:loc_menu":
         locs = meet_list_unique(MEET_DF["location"])
         rows, row = [], []
@@ -406,7 +391,6 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ====== handlers registration ======
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CallbackQueryHandler(on_cb))
-application.add_handler(CommandHandler("time", ms_time))  # command mirror for convenience
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
 
 # ====== FastAPI endpoints ======
@@ -416,7 +400,6 @@ def root():
 
 @app.post("/webhook")
 async def webhook(request: Request, x_telegram_bot_api_secret_token: str | None = Header(default=None)):
-    # Optional webhook secret validation
     if WEBHOOK_SECRET and x_telegram_bot_api_secret_token != WEBHOOK_SECRET:
         log.warning("Bad webhook secret: got=%s", x_telegram_bot_api_secret_token)
         raise HTTPException(status_code=403, detail="bad secret")
