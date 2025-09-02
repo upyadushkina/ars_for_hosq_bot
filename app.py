@@ -337,8 +337,9 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "ms:topic_menu":
         topics = meet_list_unique(MEET_DF["topic"])
         rows, row = [], []
-        for t in topics:
-            row.append(InlineKeyboardButton(t[:30], callback_data=f"ms:topic:{t}"))
+        for i, t in enumerate(topics):
+            # Используем индекс в callback_data, чтобы обойти лимит 64 байта
+            row.append(InlineKeyboardButton(t[:30] or "—", callback_data=f"ms:topic#{i}"))
             if len(row) == 3:
                 rows.append(row); row = []
         if row: rows.append(row)
@@ -346,18 +347,28 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.edit_message_text("Выбери тему:", reply_markup=InlineKeyboardMarkup(rows))
         return
 
-    if data.startswith("ms:topic:"):
-        topic = data.split(":",2)[2]
-        rows = MEET_DF.loc[MEET_DF["topic"]==topic]
-        await q.edit_message_text(f"Тема: {topic}\n\n{meet_format_rows(rows)}", disable_web_page_preview=True)
+    if data.startswith("ms:topic#"):
+        try:
+            idx = int(data.split("#",1)[1])
+        except Exception:
+            idx = -1
+        topics = meet_list_unique(MEET_DF["topic"])
+        if 0 <= idx < len(topics):
+            topic = topics[idx]
+            rows = MEET_DF.loc[MEET_DF["topic"]==topic]
+            await q.edit_message_text(f"Тема: {topic}
+
+{meet_format_rows(rows)}", disable_web_page_preview=True)
+        else:
+            await q.edit_message_text("Ошибка выбора темы")
         return
 
     # --- meet: ивенты ---
     if data == "ms:event_menu":
         events = meet_list_unique(MEET_DF["event_name"])
         rows, row = [], []
-        for e in events:
-            row.append(InlineKeyboardButton(e[:30], callback_data=f"ms:event:{e}"))
+        for i, e in enumerate(events):
+            row.append(InlineKeyboardButton(e[:30] or "—", callback_data=f"ms:event#{i}"))
             if len(row) == 2:
                 rows.append(row); row = []
         if row: rows.append(row)
@@ -365,18 +376,28 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.edit_message_text("Выбери ивент:", reply_markup=InlineKeyboardMarkup(rows))
         return
 
-    if data.startswith("ms:event:"):
-        ev = data.split(":",2)[2]
-        rows = MEET_DF.loc[MEET_DF["event_name"]==ev]
-        await q.edit_message_text(f"Ивент: {ev}\n\n{meet_format_rows(rows)}", disable_web_page_preview=True)
+    if data.startswith("ms:event#"):
+        try:
+            idx = int(data.split("#",1)[1])
+        except Exception:
+            idx = -1
+        events = meet_list_unique(MEET_DF["event_name"])
+        if 0 <= idx < len(events):
+            ev = events[idx]
+            rows = MEET_DF.loc[MEET_DF["event_name"]==ev]
+            await q.edit_message_text(f"Ивент: {ev}
+
+{meet_format_rows(rows)}", disable_web_page_preview=True)
+        else:
+            await q.edit_message_text("Ошибка выбора ивента")
         return
 
     # --- meet: локации ---
     if data == "ms:loc_menu":
         locs = meet_list_unique(MEET_DF["location"])
         rows, row = [], []
-        for l in locs:
-            row.append(InlineKeyboardButton(l[:30], callback_data=f"ms:loc:{l}"))
+        for i, l in enumerate(locs):
+            row.append(InlineKeyboardButton(l[:30] or "—", callback_data=f"ms:loc#{i}"))
             if len(row) == 2:
                 rows.append(row); row = []
         if row: rows.append(row)
@@ -384,10 +405,20 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.edit_message_text("Где ты сейчас?", reply_markup=InlineKeyboardMarkup(rows))
         return
 
-    if data.startswith("ms:loc:"):
-        loc = data.split(":",2)[2]
-        rows = MEET_DF.loc[MEET_DF["location"]==loc]
-        await q.edit_message_text(f"Локация: {loc}\n\n{meet_format_rows(rows)}", disable_web_page_preview=True)
+    if data.startswith("ms:loc#"):
+        try:
+            idx = int(data.split("#",1)[1])
+        except Exception:
+            idx = -1
+        locs = meet_list_unique(MEET_DF["location"])
+        if 0 <= idx < len(locs):
+            loc = locs[idx]
+            rows = MEET_DF.loc[MEET_DF["location"]==loc]
+            await q.edit_message_text(f"Локация: {loc}
+
+{meet_format_rows(rows)}", disable_web_page_preview=True)
+        else:
+            await q.edit_message_text("Ошибка выбора локации")
         return
 
 # ====== handlers registration ======
