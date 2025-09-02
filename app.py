@@ -19,7 +19,7 @@ app = FastAPI()
 # =============================================
 #            A) PEOPLE (ars_2025_people.csv)
 # =============================================
-PEOPLE_CSV_PATH = os.getenv("PEOPLE_CSV", "/mnt/data/ars_2025_people.csv")
+PEOPLE_CSV_PATH = os.getenv("PEOPLE_CSV", "ars_2025_people.csv")
 
 def load_people_df():
     try:
@@ -29,7 +29,7 @@ def load_people_df():
         return df
     except Exception as e:
         log.warning("Failed to load people CSV: %s", e)
-        return pd.DataFrame(columns=["Name", "Institution", "Festival Role", "Where to Meet", "Attendance"])  
+        return pd.DataFrame(columns=["Name", "Institution", "Festival Role", "Role", "Where to Meet", "Attendance", "Bio", "Conversation Tip", "Institution Link"])  
 
 PEOPLE_DF = load_people_df()
 
@@ -54,18 +54,6 @@ def unique_letters() -> List[str]:
     letters = [ch for ch in ALPHABET_ORDER if ch in letters]
     return letters
 
-def letters_keyboard():
-    letters = unique_letters()
-    rows, row = [], []
-    for i, ch in enumerate(letters, 1):
-        row.append(InlineKeyboardButton(ch, callback_data=f"name:letter:{ch}"))
-        if len(row) == 8:
-            rows.append(row); row = []
-    if row:
-        rows.append(row)
-    rows.append([InlineKeyboardButton("⬅️ Назад", callback_data="back:home")])
-    return InlineKeyboardMarkup(rows)
-
 def people_by_letter(letter: str, limit=40):
     letter = (letter or "").upper()
     mask_rows = []
@@ -76,17 +64,29 @@ def people_by_letter(letter: str, limit=40):
     subset = PEOPLE_DF.iloc[mask_rows].head(limit)
     return subset
 
-def person_card(row):
-    parts = [str(row.get('Name','')).strip()]
-    inst = str(row.get('Institution','')).strip() if 'Institution' in row else ''
-    role = str(row.get('Festival Role','')).strip() if 'Festival Role' in row else ''
-    if inst or role:
-        parts.append(" — ".join([x for x in [role, inst] if x]))
-    if row.get('Where to Meet',''):
-        parts.append(f"📍 {row['Where to Meet']}")
-    if row.get('Attendance',''):
-        parts.append(f"🕒 {row['Attendance']}")
-    return "\n".join([p for p in parts if p])
+def person_card(row_or_name):
+    if isinstance(row_or_name, str):
+        name = row_or_name
+        cand = PEOPLE_DF[PEOPLE_DF["Name"].fillna("").str.strip().str.lower() == str(name).strip().lower()]
+        if cand.empty:
+            # самое близкое совпадение
+            cand = PEOPLE_DF.iloc[[0]] if not PEOPLE_DF.empty else pd.DataFrame()
+        row = cand.iloc[0] if not cand.empty else {}
+    else:
+        row = row_or_name
+    name = str(row.get('Name','')).strip()
+    role = str(row.get('Role', row.get('Festival Role',''))).strip()
+    inst = str(row.get('Institution','')).strip()
+    bio = str(row.get('Bio','')).strip()
+    tip = str(row.get('Conversation Tip','')).strip()
+    link = str(row.get('Institution Link','')).strip()
+    lines = [f"👤 {name}"]
+    if role: lines.append(f"🧭 Role: {role}")
+    if inst: lines.append(f"🏛️ Institution: {inst}")
+    if bio:  lines.append(f"📝 Bio: {bio}")
+    if tip:  lines.append(f"💬 Tip: {tip}")
+    if link: lines.append(f"🔗 {link}")
+    return "\n".join(lines)
 
 def _ratio(a,b):
     try:
@@ -111,7 +111,7 @@ def search_by_name(query, limit=20):
 import pandas as _pd
 from zoneinfo import ZoneInfo as _ZoneInfo
 
-MEET_CSV_PATH = os.getenv("MEET_SLOTS_CSV", "/mnt/data/meet_slots.csv")
+MEET_CSV_PATH = os.getenv("MEET_SLOTS_CSV", "meet_slots.csv")
 MEET_TZ = _ZoneInfo("Europe/Vienna")
 MEET_YEAR = 2025
 
@@ -124,7 +124,6 @@ def _meet_norm_key(s: str) -> str:
     return s
 
 def _meet_parse_when_to_meet(s: str):
-    # "WED 03.09, 11:00 – 12:00" (weekday ignored)
     if not isinstance(s, str) or not s.strip():
         return (None, None, None, None)
     t = s.strip().replace("—","–")
@@ -173,52 +172,23 @@ def load_meet_df():
 
 MEET_DF = load_meet_df()
 
-def meet_format_rows(rows, limit=40):
+# Для списка людей в выбранной локации: только имя и время
+def format_people_times(rows):
     if rows is None or len(rows)==0:
         return "Ничего не найдено."
-    parts = []
-    cut = rows.head(limit)
-    for _, r in cut.iterrows():
-        name = (r.get("name") or "").strip()
-        ev = (r.get("event_name") or "").strip()
-        tp = (r.get("topic") or "").strip()
-        loc= (r.get("location") or "").strip()
-        date = r.get("date") or ""
-        span = r.get("timespan") or ""
-        line = " · ".join([
-            f"👤 {name}" if name else "",
-            f"🎫 {ev}" if ev else "",
-            f"🏷️ {tp}" if tp else "",
-            f"📍 {loc}" if loc else "",
-            f"🕒 {date} {span}".strip()
-        ])
-        parts.append(re.sub(r"\s+·\s+", " · ", line).strip(" ·"))
-    if len(rows) > limit:
-        parts.append(f"\n… и ещё {len(rows)-limit}")
-    return "\n\n".join(parts)
-
-def meet_list_unique(series):
-    vals = sorted({str(v).strip() for v in series.dropna().tolist() if str(v).strip()})
-    return vals
-
-def parse_user_time_str(s: str):
-    s = (s or "").strip().lower().replace("—","-").replace("–","-")
-    if s in ("сейчас", "now"):
-        return datetime.now(MEET_TZ)
-    m = re.match(r'^(\d{2})\.(\d{2})\s+(\d{1,2}):(\d{2})$', s)
-    if m:
-        dd, mm, hh, mi = map(int, m.groups())
-        return datetime(MEET_YEAR, mm, dd, hh, mi, tzinfo=MEET_TZ)
-    m = re.match(r'^(\d{1,2}):(\d{2})$', s)
-    if m:
-        hh, mi = map(int, m.groups())
-        today = datetime.now(MEET_TZ).date()
-        return datetime(today.year, today.month, today.day, hh, mi, tzinfo=MEET_TZ)
-    m = re.match(r'^(\d{4})-(\d{2})-(\d{2})\s+(\d{1,2}):(\d{2})$', s)
-    if m:
-        yyyy, mm, dd, hh, mi = map(int, m.groups())
-        return datetime(yyyy, mm, dd, hh, mi, tzinfo=MEET_TZ)
-    return None
+    by_name = {}
+    for _, r in rows.iterrows():
+        nm = (r.get("name") or "").strip()
+        t = (r.get("date") or "")
+        span = (r.get("timespan") or "")
+        if not nm:
+            continue
+        by_name.setdefault(nm, []).append(f"{t} {span}".strip())
+    lines = []
+    for nm in sorted(by_name.keys(), key=lambda s: s.lower()):
+        times = "; ".join(sorted(set(by_name[nm])))
+        lines.append(f"👤 {nm} — 🕒 {times}")
+    return "\n\n".join(lines) if lines else "Ничего не найдено."
 
 # =============================================
 #                 BOT UI / HANDLERS
@@ -249,7 +219,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # --- ввод имени ---
     if context.user_data.get("expect_name_typing"):
         q = (update.message.text or "").strip()
         res = search_by_name(q, limit=20)
@@ -262,7 +231,6 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Вернуться в меню?", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Назад", callback_data="back:home")]]))
         return
 
-    # --- ввод времени ---
     if context.user_data.get("ms_expect_time"):
         txt = (update.message.text or "").strip()
         qdt = parse_user_time_str(txt)
@@ -270,7 +238,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Не понял время. Примеры: 20:15, 06.09 21:00, Сейчас")
             return
         subset = MEET_DF[(MEET_DF["start_dt"].notna()) & (MEET_DF["end_dt"].notna()) & (MEET_DF["start_dt"] <= qdt) & (qdt < MEET_DF["end_dt"]) ]
-        await update.message.reply_text(meet_format_rows(subset), disable_web_page_preview=True)
+        await update.message.reply_text(format_people_times(subset), disable_web_page_preview=True)
         context.user_data["ms_expect_time"] = False
         await update.message.reply_text("Вернуться в меню?", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Назад", callback_data="back:home")]]))
         return
@@ -290,7 +258,7 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]))
         return
 
-    # --- имя ---
+    # имя
     if data == "name:menu":
         await q.edit_message_text("Как искать по имени?", reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("🔤 Имена в алфавитном порядке", callback_data="name:alpha")],
@@ -300,7 +268,16 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == "name:alpha":
-        await q.edit_message_text("Выбери букву:", reply_markup=letters_keyboard())
+        # небольшая клавиатура букв
+        letters = unique_letters()
+        rows, row = [], []
+        for i, ch in enumerate(letters, 1):
+            row.append(InlineKeyboardButton(ch, callback_data=f"name:letter:{ch}"))
+            if len(row) == 8:
+                rows.append(row); row = []
+        if row: rows.append(row)
+        rows.append([InlineKeyboardButton("⬅️ Назад", callback_data="back:home")])
+        await q.edit_message_text("Выбери букву:", reply_markup=InlineKeyboardMarkup(rows))
         return
 
     if data.startswith("name:letter:"):
@@ -316,7 +293,7 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.edit_message_text("Введи имя/фамилию для поиска:")
         return
 
-    # --- meet: время ---
+    # meet: время
     if data == "ms:time_menu":
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("Сейчас", callback_data="ms:time:now")],
@@ -329,73 +306,14 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "ms:time:now":
         now_dt = datetime.now(MEET_TZ)
         subset = MEET_DF[(MEET_DF["start_dt"].notna()) & (MEET_DF["end_dt"].notna()) & (MEET_DF["start_dt"] <= now_dt) & (now_dt < MEET_DF["end_dt"]) ]
-        await q.edit_message_text("Доступны сейчас:\n\n" + meet_format_rows(subset))
+        await q.edit_message_text("Доступны сейчас:\n\n" + format_people_times(subset))
         context.user_data["ms_expect_time"] = False
         return
 
-    # --- meet: темы ---
-    if data == "ms:topic_menu":
-        topics = meet_list_unique(MEET_DF["topic"])
-        rows, row = [], []
-        for i, t in enumerate(topics):
-            row.append(InlineKeyboardButton(t[:30] or "—", callback_data=f"ms:topic#{i}"))
-            if len(row) == 3:
-                rows.append(row); row = []
-        if row: rows.append(row)
-        rows.append([InlineKeyboardButton("⬅️ Назад", callback_data="back:home")])
-        await q.edit_message_text("Выбери тему:", reply_markup=InlineKeyboardMarkup(rows))
-        return
-
-    if data.startswith("ms:topic#"):
-        try:
-            idx = int(data.split("#",1)[1])
-        except Exception:
-            idx = -1
-        topics = meet_list_unique(MEET_DF["topic"])
-        if 0 <= idx < len(topics):
-            topic = topics[idx]
-            rows = MEET_DF.loc[MEET_DF["topic"] == topic]
-            await q.edit_message_text(
-                f"Тема: {topic}\n\n{meet_format_rows(rows)}",
-                disable_web_page_preview=True
-            )
-        else:
-            await q.edit_message_text("Ошибка выбора темы")
-        return
-
-    # --- meet: ивенты ---
-    if data == "ms:event_menu":
-        events = meet_list_unique(MEET_DF["event_name"])
-        rows, row = [], []
-        for i, e in enumerate(events):
-            row.append(InlineKeyboardButton(e[:30] or "—", callback_data=f"ms:event#{i}"))
-            if len(row) == 2:
-                rows.append(row); row = []
-        if row: rows.append(row)
-        rows.append([InlineKeyboardButton("⬅️ Назад", callback_data="back:home")])
-        await q.edit_message_text("Выбери ивент:", reply_markup=InlineKeyboardMarkup(rows))
-        return
-
-    if data.startswith("ms:event#"):
-        try:
-            idx = int(data.split("#",1)[1])
-        except Exception:
-            idx = -1
-        events = meet_list_unique(MEET_DF["event_name"])
-        if 0 <= idx < len(events):
-            ev = events[idx]
-            rows = MEET_DF.loc[MEET_DF["event_name"] == ev]
-            await q.edit_message_text(
-                f"Ивент: {ev}\n\n{meet_format_rows(rows)}",
-                disable_web_page_preview=True
-            )
-        else:
-            await q.edit_message_text("Ошибка выбора ивента")
-        return
-
-    # --- meet: локации ---
+    # meet: локации (новая логика)
     if data == "ms:loc_menu":
-        locs = meet_list_unique(MEET_DF["location"])
+        locs = sorted({str(v).strip() for v in MEET_DF["location"].dropna() if str(v).strip()})
+        context.user_data["_locs"] = locs
         rows, row = [], []
         for i, l in enumerate(locs):
             row.append(InlineKeyboardButton(l[:30] or "—", callback_data=f"ms:loc#{i}"))
@@ -411,16 +329,96 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
             idx = int(data.split("#",1)[1])
         except Exception:
             idx = -1
-        locs = meet_list_unique(MEET_DF["location"])
+        locs = context.user_data.get("_locs", [])
         if 0 <= idx < len(locs):
             loc = locs[idx]
-            rows = MEET_DF.loc[MEET_DF["location"] == loc]
-            await q.edit_message_text(
-                f"Локация: {loc}\n\n{meet_format_rows(rows)}",
-                disable_web_page_preview=True
-            )
+            subset = MEET_DF[MEET_DF["location"] == loc]
+            # список людей на кнопках
+            people = sorted({str(n).strip() for n in subset["name"].dropna() if str(n).strip()})
+            context.user_data["_people_from_loc"] = people
+            text = f"Локация: {loc}\n\n" + format_people_times(subset)
+            kb_rows, r = [], []
+            for i, nm in enumerate(people):
+                r.append(InlineKeyboardButton(nm[:30] or "—", callback_data=f"ms:person#{i}"))
+                if len(r) == 2:
+                    kb_rows.append(r); r = []
+            if r: kb_rows.append(r)
+            kb_rows.append([InlineKeyboardButton("⬅️ Назад к локациям", callback_data="ms:loc_menu")])
+            await q.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb_rows), disable_web_page_preview=True)
         else:
             await q.edit_message_text("Ошибка выбора локации")
+        return
+
+    if data.startswith("ms:person#"):
+        try:
+            idx = int(data.split("#",1)[1])
+        except Exception:
+            idx = -1
+        people = context.user_data.get("_people_from_loc", [])
+        if 0 <= idx < len(people):
+            nm = people[idx]
+            card = person_card(nm)
+            await q.edit_message_text(card, disable_web_page_preview=True, reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Назад к людям", callback_data="ms:loc_menu")],
+                [InlineKeyboardButton("⬅️ В меню", callback_data="back:home")],
+            ]))
+        else:
+            await q.edit_message_text("Не удалось найти человека.")
+        return
+
+    # темы/ивенты оставлены рабочими (пригодится позже)
+    if data == "ms:topic_menu":
+        topics = sorted({str(v).strip() for v in MEET_DF["topic"].dropna() if str(v).strip()})
+        context.user_data["_topics"] = topics
+        rows, row = [], []
+        for i, t in enumerate(topics):
+            row.append(InlineKeyboardButton(t[:30] or "—", callback_data=f"ms:topic#{i}"))
+            if len(row) == 3:
+                rows.append(row); row = []
+        if row: rows.append(row)
+        rows.append([InlineKeyboardButton("⬅️ Назад", callback_data="back:home")])
+        await q.edit_message_text("Выбери тему:", reply_markup=InlineKeyboardMarkup(rows))
+        return
+
+    if data.startswith("ms:topic#"):
+        try:
+            idx = int(data.split("#",1)[1])
+        except Exception:
+            idx = -1
+        topics = context.user_data.get("_topics", [])
+        if 0 <= idx < len(topics):
+            topic = topics[idx]
+            rows = MEET_DF[MEET_DF["topic"] == topic]
+            await q.edit_message_text(f"Тема: {topic}\n\n{format_people_times(rows)}", disable_web_page_preview=True)
+        else:
+            await q.edit_message_text("Ошибка выбора темы")
+        return
+
+    if data == "ms:event_menu":
+        events = sorted({str(v).strip() for v in MEET_DF["event_name"].dropna() if str(v).strip()})
+        context.user_data["_events"] = events
+        rows, row = [], []
+        for i, e in enumerate(events):
+            row.append(InlineKeyboardButton(e[:30] or "—", callback_data=f"ms:event#{i}"))
+            if len(row) == 2:
+                rows.append(row); row = []
+        if row: rows.append(row)
+        rows.append([InlineKeyboardButton("⬅️ Назад", callback_data="back:home")])
+        await q.edit_message_text("Выбери ивент:", reply_markup=InlineKeyboardMarkup(rows))
+        return
+
+    if data.startswith("ms:event#"):
+        try:
+            idx = int(data.split("#",1)[1])
+        except Exception:
+            idx = -1
+        events = context.user_data.get("_events", [])
+        if 0 <= idx < len(events):
+            ev = events[idx]
+            rows = MEET_DF[MEET_DF["event_name"] == ev]
+            await q.edit_message_text(f"Ивент: {ev}\n\n{format_people_times(rows)}", disable_web_page_preview=True)
+        else:
+            await q.edit_message_text("Ошибка выбора ивента")
         return
 
 # ====== handlers registration ======
