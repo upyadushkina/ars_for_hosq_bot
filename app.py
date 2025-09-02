@@ -14,6 +14,12 @@ from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQu
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("ae-bot")
 
+# ---------- config ----------
+TOKEN = os.getenv("TELEGRAM_TOKEN")
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
+if not TOKEN:
+    raise RuntimeError("Missing TELEGRAM_TOKEN env var")
+
 # =============================================
 #            A) PEOPLE (ars_2025_people.csv)
 # =============================================
