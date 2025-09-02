@@ -20,6 +20,17 @@ WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
 if not TOKEN:
     raise RuntimeError("Missing TELEGRAM_TOKEN env var")
 
+# Инициализация/старт PTB при запуске FastAPI и корректное завершение
+@app.on_event("startup")
+async def on_startup():
+    await application.initialize()
+    await application.start()
+
+@app.on_event("shutdown")
+async def on_shutdown():
+    await application.stop()
+    await application.shutdown()
+
 # =============================================
 #            A) PEOPLE (ars_2025_people.csv)
 # =============================================
