@@ -3,17 +3,17 @@ from datetime import datetime
 from typing import List
 import pandas as pd
 from difflib import SequenceMatcher
+from zoneinfo import ZoneInfo
+
 from fastapi import FastAPI, Request, Header, HTTPException
 from fastapi.responses import PlainTextResponse, JSONResponse
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
-from zoneinfo import ZoneInfo
 
 # ---------- logging ----------
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("ae-bot")
 
-# Create FastAPI app EARLY so decorators below can reference it
 app = FastAPI()
 
 # =============================================
@@ -31,62 +31,53 @@ def load_people_df():
         log.warning("Failed to load people CSV: %s", e)
         return pd.DataFrame(columns=[
             "Name", "Institution", "Festival Role", "Role", "Where to Meet",
-            "Attendance", "Bio", "Conversation Tip", "Institution Link", "Contact"
+            "Attendance", "Bio", "Conversation Tip", "Institution Link", "Contact", "Photo"
         ])
 
 PEOPLE_DF = load_people_df()
 
-# ---------- helpers ----------
 ALPHABET_ORDER = list("АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ") + list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
-def _clean(value):
-    """Return a trimmed string or empty string for NaN/None."""
-    if value is None:
+def _clean(val):
+    if val is None:
         return ""
     try:
-        if pd.isna(value):
+        if pd.isna(val):
             return ""
     except Exception:
-        pass    # not pandas
-    return str(value).strip()
-
-def get_alpha_char(s: str) -> str | None:
-    m = re.search("[A-Za-zА-Яа-яЁё]", s or "")
-    if not m:
-        return None
-    return m.group(0).upper()
+        pass
+    return str(val).strip()
 
 def split_name(name: str):
-    parts = re.split("[\\s\\-]+", (name or "").strip())
+    parts = re.split(r"[\s\-]+", (name or "").strip())
     parts = [p for p in parts if p]
     first = parts[0] if parts else ""
     last = parts[-1] if len(parts) > 1 else ""
     return first, last
 
 def unique_letters():
-    """Return list of unique initial letters present in the people table."""
     letters = set()
     for _, row in PEOPLE_DF.iterrows():
         first, last = split_name(row.get("Name", ""))
         for token in (first, last):
-            ch = get_alpha_char(token)
-            if ch:
-                letters.add(ch)
+            m = re.search("[A-Za-zА-Яа-яЁё]", token or "")
+            if m:
+                letters.add(m.group(0).upper())
     ordered = [ch for ch in ALPHABET_ORDER if ch in letters]
     extra = sorted([ch for ch in letters if ch not in ALPHABET_ORDER])
     return ordered + extra
 
 def people_by_letter(letter: str, limit: int = 40):
-    def starts_with(letter: str, token: str) -> bool:
-        return bool(token) and token.lower().startswith(letter.lower())
-    mask_rows: List[int] = []
+    def starts_with(token):
+        return token.lower().startswith(letter.lower()) if token else False
+    mask = []
     for idx, row in PEOPLE_DF.iterrows():
         first, last = split_name(row.get("Name", ""))
-        if starts_with(letter, first) or starts_with(letter, last):
-            mask_rows.append(idx)
-    return PEOPLE_DF.iloc[mask_rows].sort_values("Name").head(limit)
+        if starts_with(first) or starts_with(last):
+            mask.append(idx)
+    return PEOPLE_DF.iloc[mask].sort_values("Name").head(limit)
 
-def search_by_name(query: str, limit: int = 20):
+def search_by_name(query, limit: int = 20):
     return PEOPLE_DF[
         PEOPLE_DF["Name"].str.contains(re.escape(query), case=False, na=False)
     ].sort_values("Name").head(limit)
@@ -99,6 +90,7 @@ def person_card(row):
     inst = _clean(row.get("Institution"))
     inst_link = _clean(row.get("Institution Link"))
     contact = _clean(row.get("Contact"))
+
     blocks: List[str] = []
     if name: blocks.append(name)
     if role: blocks.append(role)
@@ -119,7 +111,7 @@ async def send_person_card(message, row):
             await message.reply_photo(photo, caption=caption)
             return
         except Exception as e:
-            log.warning("Failed to send photo for %s: %s", _clean(row.get("Name")), e)
+            log.warning("Photo send failed for %s: %s", _clean(row.get("Name")), e)
     await message.reply_text(caption, disable_web_page_preview=True)
 
 # =============================================
@@ -132,25 +124,9 @@ MEET_YEAR = 2025
 def _meet_norm_key(s: str) -> str:
     if not isinstance(s, str):
         return ""
-    s = s.strip().lower()
-    s = re.sub(r"\s+", " ", s)
+    s = re.sub(r"\s+", " ", s.strip().lower())
     s = re.sub(r"[^a-z0-9]+", "-", s)
-    s = re.sub(r"-+", "-", s).strip("-")
-    return s
-
-def _meet_parse_when_to_meet(s: str):
-    if not isinstance(s, str) or not s.strip():
-        return (None, None, None, None)
-    t = s.strip().replace("—", "–")
-    m = re.match(r'^[A-Za-z]{3}\s+(\d{2})\.(\d{2})\s*,\s*(\d{1,2}):(\d{2})\s*[–-]\s*(\d{1,2}):(\d{2})', t)
-    if not m:
-        m = re.match(r'^(\d{2})\.(\d{2})\s*,\s*(\d{1,2}):(\d{2})\s*[–-]\s*(\d{1,2}):(\d{2})', t)
-    if not m:
-        return (None, None, None, None)
-    dd, mm, h1, mi1, h2, mi2 = map(int, m.groups())
-    start_dt = datetime(MEET_YEAR, mm, dd, h1, mi1, tzinfo=MEET_TZ)
-    end_dt = datetime(MEET_YEAR, mm, dd, h2, mi2, tzinfo=MEET_TZ)
-    return (start_dt, end_dt, f"{start_dt:%d.%m}", f"{start_dt:%H:%M}–{end_dt:%H:%M}")
+    return re.sub(r"-+", "-", s).strip("-")
 
 def load_meet_df():
     try:
@@ -158,27 +134,44 @@ def load_meet_df():
     except Exception as e:
         log.warning("Failed to load meet slots CSV: %s", e)
         return pd.DataFrame(columns=[
-            "Name", "When to Meet", "Where to Meet", "Event name", "Topic", "Event type",
-            "start_dt", "end_dt", "date", "timespan", "location_key", "topic_key", "event_key"
+            "name", "date", "time_start", "time_finish", "location",
+            "event_name", "topic", "start_dt", "end_dt", "timespan",
+            "location_key", "topic_key", "event_key"
         ])
 
-    col_name = next((c for c in df.columns if c.lower() == "name"), None)
-    col_when = next((c for c in df.columns if c.lower().startswith("when")), None)
-    col_loc  = next((c for c in df.columns if c.lower().startswith("where")), None)
-    col_event = next((c for c in df.columns if "event name" in c.lower() or c.lower().strip() == "event"), None)
-    col_topic = next((c for c in df.columns if c.lower().strip() == "topic" or "theme" in c.lower()), None)
+    col_name   = next((c for c in df.columns if c.lower() == "name"), None)
+    col_date   = next((c for c in df.columns if c.lower().strip() == "date"), None)
+    col_start  = next((c for c in df.columns if c.lower().startswith("time start")), None)
+    col_finish = next((c for c in df.columns if c.lower().startswith("time finish")), None)
+    col_loc    = next((c for c in df.columns if c.lower().startswith("where")), None)
+    col_event  = next((c for c in df.columns if "event name" in c.lower() or c.lower().strip() == "event"), None)
+    col_topic  = next((c for c in df.columns if c.lower().strip() == "topic" or "theme" in c.lower()), None)
 
     out = pd.DataFrame()
-    out["name"]       = df[col_name]  if col_name  else ""
-    out["when_raw"]   = df[col_when]  if col_when  else ""
-    out["location"]   = df[col_loc]   if col_loc   else ""
-    out["event_name"] = df[col_event] if col_event else ""
-    out["topic"]      = df[col_topic] if col_topic else ""
+    out["name"]       = df[col_name]   if col_name   else ""
+    out["date_raw"]   = df[col_date]   if col_date   else ""
+    out["time_start"] = df[col_start]  if col_start  else ""
+    out["time_finish"]= df[col_finish] if col_finish else ""
+    out["location"]   = df[col_loc]    if col_loc    else ""
+    out["event_name"] = df[col_event]  if col_event  else ""
+    out["topic"]      = df[col_topic]  if col_topic  else ""
 
     starts, ends, dates, spans = [], [], [], []
-    for v in out["when_raw"]:
-        st, en, d, sp = _meet_parse_when_to_meet(v)
-        starts.append(st); ends.append(en); dates.append(d); spans.append(sp)
+    for d, ts, tf in zip(out["date_raw"], out["time_start"], out["time_finish"]):
+        m = re.match(r"(\d{1,2})\.(\d{1,2})", str(d).strip())
+        if not m:
+            starts.append(None); ends.append(None); dates.append(""); spans.append(""); continue
+        dd, mm = map(int, m.groups())
+        try:
+            h1, m1 = map(int, str(ts).split(":"))
+            h2, m2 = map(int, str(tf).split(":"))
+        except Exception:
+            starts.append(None); ends.append(None); dates.append(""); spans.append(""); continue
+        st = datetime(MEET_YEAR, mm, dd, h1, m1, tzinfo=MEET_TZ)
+        en = datetime(MEET_YEAR, mm, dd, h2, m2, tzinfo=MEET_TZ)
+        starts.append(st); ends.append(en)
+        dates.append(f"{st:%d.%m}")
+        spans.append(f"{st:%H:%M}–{en:%H:%M}")
     out["start_dt"] = starts
     out["end_dt"]   = ends
     out["date"]     = dates
@@ -195,19 +188,13 @@ def format_people_times(rows):
         return "Ничего не найдено."
     by_name: dict[str, List[str]] = {}
     for _, r in rows.iterrows():
-        nm = _clean(r.get("name"))
-        start = r.get("start_dt")
-        end = r.get("end_dt")
+        nm  = _clean(r.get("name"))
+        st  = r.get("start_dt")
+        en  = r.get("end_dt")
         loc = _clean(r.get("location"))
-        if (
-            not nm
-            or not isinstance(start, datetime)
-            or not isinstance(end, datetime)
-            or pd.isna(start)
-            or pd.isna(end)
-        ):
+        if not nm or not isinstance(st, datetime) or not isinstance(en, datetime):
             continue
-        entry = f"🕒 {start:%d.%m %H:%M}–{end:%H:%M}\n📍 {loc}"
+        entry = f"🕒 {st:%d.%m %H:%M}–{en:%H:%M}\n📍 {loc}"
         by_name.setdefault(nm, []).append(entry)
     lines: List[str] = []
     for nm in sorted(by_name.keys(), key=lambda s: s.lower()):
@@ -266,7 +253,6 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if row: rows.append(row)
         rows.append([InlineKeyboardButton("⬅️ В меню", callback_data="back:home")])
         await update.message.reply_text("Выбери человека:", reply_markup=InlineKeyboardMarkup(rows))
-        return
 
 async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
@@ -450,14 +436,18 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ---------- MEET SLOTS: TIME ----------
     if data == "ms:time_menu":
         dates = ["03.09", "04.09", "05.09", "06.09", "07.09"]
-        rows = [[InlineKeyboardButton(d, callback_data=f"ms:time_date#{d}") for d in dates]]
+        rows = []
+        row = []
+        for d in dates:
+            row.append(InlineKeyboardButton(d, callback_data=f"ms:time_date#{d}"))
+        rows.append(row)
         rows.append([InlineKeyboardButton("⬅️ Назад", callback_data="back:home")])
         await q.edit_message_text("Выбери дату:", reply_markup=InlineKeyboardMarkup(rows))
         return
 
     if data.startswith("ms:time_date#"):
         date = data.split("#", 1)[1]
-        hours = [f"{h:02d}:00" for h in list(range(10,24)) + [0]]
+        hours = [f"{h:02d}:00" for h in list(range(10, 24)) + [0]]
         rows, row = [], []
         for h in hours:
             row.append(InlineKeyboardButton(h, callback_data=f"ms:time_hour#{date}#{h[:2]}"))
@@ -469,13 +459,14 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data.startswith("ms:time_hour#"):
-        parts = data.split("#")
-        date = parts[1]
-        hour = int(parts[2])
+        _, date, hour_str = data.split("#")
+        hour = int(hour_str)
         dd, mm = map(int, date.split("."))
         qdt = datetime(MEET_YEAR, mm, dd, hour, 0, tzinfo=MEET_TZ)
-        subset = MEET_DF[(MEET_DF["start_dt"].notna()) & (MEET_DF["end_dt"].notna()) &
-                         (MEET_DF["start_dt"] <= qdt) & (qdt < MEET_DF["end_dt"])]
+        subset = MEET_DF[
+            (MEET_DF["start_dt"].notna()) & (MEET_DF["end_dt"].notna()) &
+            (MEET_DF["start_dt"] <= qdt) & (qdt < MEET_DF["end_dt"])
+        ]
         people = sorted({str(n).strip() for n in subset["name"].dropna() if str(n).strip()})
         context.user_data["_people_from_time"] = people
         text = f"{date} {hour:02d}:00\n\n" + format_people_times(subset)
@@ -491,7 +482,7 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("ms:time_person#"):
         try:
-            idx = int(data.split("#",1)[1])
+            idx = int(data.split("#", 1)[1])
         except Exception:
             idx = -1
         people = context.user_data.get("_people_from_time", [])
@@ -529,16 +520,16 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("ms:topic#"):
         try:
-            idx = int(data.split("#",1)[1])
+            idx = int(data.split("#", 1)[1])
         except Exception:
             idx = -1
         topics = context.user_data.get("_topics", [])
         if 0 <= idx < len(topics):
             topic = topics[idx]
-            rows_df = MEET_DF[MEET_DF["topic"] == topic]
-            people = sorted({str(n).strip() for n in rows_df["name"].dropna() if str(n).strip()})
+            rows = MEET_DF[MEET_DF["topic"] == topic]
+            people = sorted({str(n).strip() for n in rows["name"].dropna() if str(n).strip()})
             context.user_data["_people_from_topic"] = people
-            text = f"Тема: {topic}\n\n" + format_people_times(rows_df)
+            text = f"Тема: {topic}\n\n" + format_people_times(rows)
             kb_rows, r = [], []
             for i, nm in enumerate(people):
                 r.append(InlineKeyboardButton(nm[:30] or "—", callback_data=f"ms:topic_person#{i}"))
@@ -553,7 +544,7 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("ms:topic_person#"):
         try:
-            idx = int(data.split("#",1)[1])
+            idx = int(data.split("#", 1)[1])
         except Exception:
             idx = -1
         people = context.user_data.get("_people_from_topic", [])
@@ -591,16 +582,16 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("ms:event#"):
         try:
-            idx = int(data.split("#",1)[1])
+            idx = int(data.split("#", 1)[1])
         except Exception:
             idx = -1
         events = context.user_data.get("_events", [])
         if 0 <= idx < len(events):
             ev = events[idx]
-            rows_df = MEET_DF[MEET_DF["event_name"] == ev]
-            people = sorted({str(n).strip() for n in rows_df["name"].dropna() if str(n).strip()})
+            rows = MEET_DF[MEET_DF["event_name"] == ev]
+            people = sorted({str(n).strip() for n in rows["name"].dropna() if str(n).strip()})
             context.user_data["_people_from_event"] = people
-            text = f"Ивент: {ev}\n\n" + format_people_times(rows_df)
+            text = f"Ивент: {ev}\n\n" + format_people_times(rows)
             kb_rows, r = [], []
             for i, nm in enumerate(people):
                 r.append(InlineKeyboardButton(nm[:30] or "—", callback_data=f"ms:event_person#{i}"))
@@ -615,7 +606,7 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("ms:event_person#"):
         try:
-            idx = int(data.split("#",1)[1])
+            idx = int(data.split("#", 1)[1])
         except Exception:
             idx = -1
         people = context.user_data.get("_people_from_event", [])
