@@ -38,6 +38,17 @@ PEOPLE_DF = load_people_df()
 # ---------- helpers ----------
 ALPHABET_ORDER = list("АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ") + list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
+def _clean(value):
+    """Return a trimmed string or empty string for NaN/None."""
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except Exception:
+        pass
+    return str(value).strip()
+
 def get_alpha_char(s: str) -> str | None:
     m = re.search("[A-Za-zА-Яа-яЁё]", s or "")
     if not m:
@@ -66,7 +77,9 @@ def unique_letters():
 
 def people_by_letter(letter: str, limit: int = 40):
     def starts_with(letter: str, token: str) -> bool:
-        return bool(token) and token.lower().startswith(letter.lower())
+        if not token:
+            return False
+        return token.lower().startswith(letter.lower())
 
     mask_rows: List[int] = []
     for idx, row in PEOPLE_DF.iterrows():
@@ -78,12 +91,12 @@ def people_by_letter(letter: str, limit: int = 40):
 
 def person_card(row):
     """Build a caption for a person's card using required fields."""
-    name = (row.get("Name") or "").strip()
-    role = (row.get("Role") or "").strip()
-    bio = (row.get("Bio") or "").strip()
-    tip = (row.get("Conversation Tip") or "").strip()
-    inst = (row.get("Institution") or "").strip()
-    inst_link = (row.get("Institution Link") or "").strip()
+    name = _clean(row.get("Name"))
+    role = _clean(row.get("Role"))
+    bio = _clean(row.get("Bio"))
+    tip = _clean(row.get("Conversation Tip"))
+    inst = _clean(row.get("Institution"))
+    inst_link = _clean(row.get("Institution Link"))
 
     parts: List[str] = []
     if name:
@@ -104,13 +117,13 @@ def person_card(row):
 async def send_person_card(message, row):
     """Send a person's card with photo if available."""
     caption = person_card(row)
-    photo = (row.get("Photo") or row.get("photo") or "").strip()
+    photo = _clean(row.get("Photo")) or _clean(row.get("photo"))
     if photo:
         try:
             await message.reply_photo(photo, caption=caption)
             return
         except Exception as e:
-            log.warning("Failed to send photo for %s: %s", row.get("Name", ""), e)
+            log.warning("Failed to send photo for %s: %s", _clean(row.get("Name")), e)
     await message.reply_text(caption, disable_web_page_preview=True)
 
 def search_by_name(query, limit: int = 10):
@@ -156,8 +169,7 @@ MEET_TZ = _ZoneInfo("Europe/Vienna")
 MEET_YEAR = 2025
 
 def _meet_norm_key(s: str) -> str:
-    if not isinstance(s, str):
-        return ""
+    if not isinstance(s, str): return ""
     s = s.strip().lower()
     s = re.sub(r"\s+", " ", s)
     s = re.sub(r"[^a-z0-9]+", "-", s)
@@ -183,9 +195,8 @@ def load_meet_df():
         df = _pd.read_csv(MEET_CSV_PATH)
     except Exception as e:
         log.warning("Failed to load meet slots CSV: %s", e)
-        return _pd.DataFrame(columns=["Name","When to Meet","Where to Meet","Event name",
-                                      "Topic","Event type","start_dt","end_dt","date",
-                                      "timespan","location_key","topic_key","event_key"])
+        return _pd.DataFrame(columns=["Name","When to Meet","Where to Meet","Event name","Topic","Event type",
+                                      "start_dt","end_dt","date","timespan","location_key","topic_key","event_key"])
     col_name = next((c for c in df.columns if c.lower()=="name"), None)
     col_when = next((c for c in df.columns if c.lower().startswith("when")), None)
     col_loc  = next((c for c in df.columns if c.lower().startswith("where")), None)
@@ -237,18 +248,28 @@ def parse_user_time_str(s: str) -> datetime | None:
 def format_people_times(rows):
     if rows is None or len(rows) == 0:
         return "Ничего не найдено."
-    by_name = {}
+    by_name: dict[str, List[tuple[str, str]]] = {}
     for _, r in rows.iterrows():
-        nm = (r.get("name") or "").strip()
-        t = (r.get("date") or "")
-        span = (r.get("timespan") or "")
-        if not nm:
+        nm = _clean(r.get("name"))
+        start = r.get("start_dt")
+        end = r.get("end_dt")
+        loc = _clean(r.get("location"))
+        if (
+            not nm
+            or not isinstance(start, datetime)
+            or not isinstance(end, datetime)
+            or pd.isna(start)
+            or pd.isna(end)
+        ):
             continue
-        by_name.setdefault(nm, []).append(f"{t} {span}".strip())
-    lines = []
+        timestr = f"{start:%d.%m %H:%M}–{end:%H:%M}"
+        by_name.setdefault(nm, []).append((timestr, loc))
+    lines: List[str] = []
     for nm in sorted(by_name.keys(), key=lambda s: s.lower()):
-        times = "; ".join(sorted(set(by_name[nm])))
-        lines.append(f"👤 {nm} — 🕒 {times}")
+        parts = [f"👤 {nm}"]
+        for t, loc in by_name[nm]:
+            parts.append(f"🕒 {t}\n📍 {loc}")
+        lines.append("\n".join(parts))
     return "\n\n".join(lines) if lines else "Ничего не найдено."
 
 # =============================================
@@ -542,7 +563,6 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await q.edit_message_text("Ошибка выбора темы")
         return
 
-    # ивенты
     if data == "ms:event_menu":
         events = sorted({str(v).strip() for v in MEET_DF["event_name"].dropna() if str(v).strip()})
         context.user_data["_events"] = events
