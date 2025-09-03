@@ -29,7 +29,7 @@ def load_people_df():
         return df
     except Exception as e:
         log.warning("Failed to load people CSV: %s", e)
-        return pd.DataFrame(columns=["Name", "Institution", "Festival Role", "Role", "Attendance", "Bio", "Conversation Tip", "Institution Link"])
+        return pd.DataFrame(columns=["Name", "Institution", "Festival Role", "Role", "Where to Meet", "Attendance", "Bio", "Conversation Tip", "Institution Link"])
 
 PEOPLE_DF = load_people_df()
 
@@ -73,7 +73,7 @@ def people_by_letter(letter: str, limit: int = 40):
         first, last = split_name(row.get("Name", ""))
         if starts_with(letter, first) or starts_with(letter, last):
             mask_rows.append(idx)
-    subset = PEOPLE_DF.iloc[mask_rows].head(limit)
+    subset = PEOPLE_DF.iloc[mask_rows].sort_values("Name").head(limit)
     return subset
 
 def person_card(row):
@@ -104,7 +104,7 @@ def person_card(row):
 async def send_person_card(message, row):
     """Send a person's card with photo if available."""
     caption = person_card(row)
-    photo = (row.get("Photo") or row.get("photo") or "").strip()
+    photo = (row.get("Photo") or row.get("photo") or "").strip
     if photo:
         try:
             await message.reply_photo(photo, caption=caption)
@@ -114,7 +114,9 @@ async def send_person_card(message, row):
     await message.reply_text(caption, disable_web_page_preview=True)
 
 def search_by_name(query, limit: int = 10):
-    return PEOPLE_DF[PEOPLE_DF["Name"].str.contains(re.escape(query), case=False, na=False)].head(limit)
+    return PEOPLE_DF[
+        PEOPLE_DF["Name"].str.contains(re.escape(query), case=False, na=False)
+    ].sort_values("Name").head(limit)
 
 def suggest_by_name(query: str, n: int = 5):
     q = (query or "").strip().lower()
@@ -320,11 +322,20 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data.startswith("name:letter:"):
-        letter = data.split(":",2)[2]
+        letter = data.split(":", 2)[2]
         res = people_by_letter(letter)
         await q.edit_message_text(f"Имена на букву {letter}:")
         for _, row in res.iterrows():
             await send_person_card(q.message, row)
+        await q.message.reply_text(
+            "Что дальше?",
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [InlineKeyboardButton("⬅️ Назад к буквам", callback_data="name:alpha")],
+                    [InlineKeyboardButton("⬅️ В меню", callback_data="back:home")],
+                ]
+            ),
+        )
         return
 
     if data == "name:typing":
@@ -435,7 +446,10 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if 0 <= idx < len(topics):
             topic = topics[idx]
             rows = MEET_DF[MEET_DF["topic"] == topic]
-            await q.edit_message_text(f"Тема: {topic}\n\n{format_people_times(rows)}", disable_web page_preview=True)
+            await q.edit_message_text(
+                f"Тема: {topic}\n\n{format_people_times(rows)}",
+                disable_web_page_preview=True,
+            )
         else:
             await q.edit_message_text("Ошибка выбора темы")
         return
