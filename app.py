@@ -29,7 +29,7 @@ def load_people_df():
         return df
     except Exception as e:
         log.warning("Failed to load people CSV: %s", e)
-        return pd.DataFrame(columns=["Name", "Institution", "Festival Role", "Role", "Where to Meet", "Attendance", "Bio", "Conversation Tip", "Institution Link"])  
+        return pd.DataFrame(columns=["Name", "Institution", "Festival Role", "Role", "Where to Meet", "Attendance", "Bio", "Conversation Tip", "Institution Link"])
 
 PEOPLE_DF = load_people_df()
 
@@ -43,15 +43,16 @@ def get_alpha_char(s: str) -> str | None:
     return m.group(0).upper()
 
 def split_name(name: str):
-    parts = re.split("[\s\-]+", (name or "").strip())
+    parts = re.split("[\\s\\-]+", (name or "").strip())
     parts = [p for p in parts if p]
     first = parts[0] if parts else ""
     last = parts[-1] if len(parts) > 1 else ""
     return first, last
 
 def unique_letters():
+    """Return list of unique initial letters present in the people table."""
     letters = set()
-    for _, row in DF.iterrows():
+    for _, row in PEOPLE_DF.iterrows():
         first, last = split_name(row.get("Name", ""))
         for token in (first, last):
             ch = get_alpha_char(token)
@@ -61,47 +62,66 @@ def unique_letters():
     extra = sorted([ch for ch in letters if ch not in ALPHABET_ORDER])
     return ordered + extra
 
-def people_by_letter(letter: str, limit=40):
+def people_by_letter(letter: str, limit: int = 40):
     def starts_with(letter: str, token: str) -> bool:
         if not token:
             return False
         return token.lower().startswith(letter.lower())
-    mask_rows = []
-    for idx, row in DF.iterrows():
+
+    mask_rows: List[int] = []
+    for idx, row in PEOPLE_DF.iterrows():
         first, last = split_name(row.get("Name", ""))
         if starts_with(letter, first) or starts_with(letter, last):
             mask_rows.append(idx)
-    subset = DF.iloc[mask_rows].head(limit)
+    subset = PEOPLE_DF.iloc[mask_rows].head(limit)
     return subset
 
 def person_card(row):
-    parts = [row.get('Name','').strip()]
-    inst = row.get('Institution','').strip()
-    role = row.get('Festival Role','').strip() if 'Festival Role' in row else ''
-    if inst or role:
-        parts.append(" — ".join([x for x in [role, inst] if x]))
-    if row.get('Where to Meet',''):
-        parts.append(f"📍 {row['Where to Meet']}")
-    if row.get('Attendance',''):
-        parts.append(f"🕒 {row['Attendance']}")
-    if row.get('Conversation Tip',''):
-        parts.append(f"💬 {row['Conversation Tip']}")
-    if row.get('Bio',''):
-        txt = row['Bio']
-        parts.append(f"ℹ️ {txt[:400]}{'…' if len(txt)>400 else ''}")
-    if row.get('Institution Link',''):
-        parts.append(row['Institution Link'])
+    """Build a caption for a person's card using required fields."""
+    name = (row.get("Name") or "").strip()
+    role = (row.get("Role") or "").strip()
+    bio = (row.get("Bio") or "").strip()
+    tip = (row.get("Conversation Tip") or "").strip()
+    inst = (row.get("Institution") or "").strip()
+    inst_link = (row.get("Institution Link") or "").strip()
+
+    parts: List[str] = []
+    if name:
+        parts.append(name)
+    if role:
+        parts.append(role)
+    if bio:
+        parts.append(f"ℹ️ {bio}")
+    if tip:
+        parts.append(f"💬 {tip}")
+    if inst or inst_link:
+        inst_line = inst
+        if inst_link:
+            inst_line = f"{inst}\n{inst_link}" if inst else inst_link
+        parts.append(inst_line)
     return "\n".join(parts)
 
-def search_by_name(query, limit=10):
-    return DF[DF["Name"].str.contains(re.escape(query), case=False, na=False)].head(limit)
+async def send_person_card(message, row):
+    """Send a person's card with photo if available."""
+    caption = person_card(row)
+    photo = (row.get("Photo") or row.get("photo") or "").strip()
+    if photo:
+        try:
+            await message.reply_photo(photo, caption=caption)
+            return
+        except Exception as e:
+            log.warning("Failed to send photo for %s: %s", row.get("Name", ""), e)
+    await message.reply_text(caption, disable_web_page_preview=True)
+
+def search_by_name(query, limit: int = 10):
+    return PEOPLE_DF[PEOPLE_DF["Name"].str.contains(re.escape(query), case=False, na=False)].head(limit)
 
 def suggest_by_name(query: str, n: int = 5):
     q = (query or "").strip().lower()
     if not q:
-        return DF.head(0)
+        return PEOPLE_DF.head(0)
     scores = []
-    for idx, row in DF.iterrows():
+    for idx, row in PEOPLE_DF.iterrows():
         name = (row.get("Name", "") or "").strip()
         if not name:
             continue
@@ -121,7 +141,7 @@ def suggest_by_name(query: str, n: int = 5):
                 picked.append(idx)
             if len(picked) == n:
                 break
-    return DF.loc[picked] if picked else DF.head(0)
+    return PEOPLE_DF.loc[picked] if picked else PEOPLE_DF.head(0)
 
 # =============================================
 #        B) MEET SLOTS (meet_slots.csv)
@@ -165,7 +185,8 @@ def load_meet_df():
     col_name = next((c for c in df.columns if c.lower()=="name"), None)
     col_when = next((c for c in df.columns if c.lower().startswith("when")), None)
     col_loc  = next((c for c in df.columns if c.lower().startswith("where")), None)
-    col_event= next((c for c in df.columns if "event name" in c.lower() or c.lower().strip()=="event"), None)
+    col_event= next((c for c in df.columns if "event name" in c.lower() or c.lower().strip()=="event"), None
+    )
     col_topic= next((c for c in df.columns if c.lower().strip()=="topic" or "theme" in c.lower()), None)
 
     out = _pd.DataFrame()
@@ -244,7 +265,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Ничего не нашлось. Попробуй по-другому.")
         else:
             for _, row in res.iterrows():
-                await update.message.reply_text(person_card(row), disable_web_page_preview=True)
+                await send_person_card(update.message, row)
         context.user_data["expect_name_typing"] = False
         await update.message.reply_text("Вернуться в меню?", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Назад", callback_data="back:home")]]))
         return
@@ -303,7 +324,7 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
         res = people_by_letter(letter)
         await q.edit_message_text(f"Имена на букву {letter}:")
         for _, row in res.iterrows():
-            await q.message.reply_text(person_card(row), disable_web_page_preview=True)
+            await send_person_card(q.message, row)
         return
 
     if data == "name:typing":
@@ -375,11 +396,18 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
         people = context.user_data.get("_people_from_loc", [])
         if 0 <= idx < len(people):
             nm = people[idx]
-            card = person_card(nm)
-            await q.edit_message_text(card, disable_web_page_preview=True, reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("⬅️ Назад к людям", callback_data="ms:loc_menu")],
-                [InlineKeyboardButton("⬅️ В меню", callback_data="back:home")],
-            ]))
+            row = PEOPLE_DF[PEOPLE_DF["Name"].str.strip().str.lower() == nm.strip().lower()]
+            if not row.empty:
+                await send_person_card(q.message, row.iloc[0])
+                await q.message.reply_text(
+                    "Что дальше?",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("⬅️ Назад к людям", callback_data="ms:loc_menu")],
+                        [InlineKeyboardButton("⬅️ В меню", callback_data="back:home")],
+                    ]),
+                )
+            else:
+                await q.edit_message_text("Не удалось найти человека.")
         else:
             await q.edit_message_text("Не удалось найти человека.")
         return
@@ -407,7 +435,7 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if 0 <= idx < len(topics):
             topic = topics[idx]
             rows = MEET_DF[MEET_DF["topic"] == topic]
-            await q.edit_message_text(f"Тема: {topic}\n\n{format_people_times(rows)}", disable_web_page_preview=True)
+            await q.edit_message_text(f"Тема: {topic}\n\n{format_people_times(rows)}", disable_web page_preview=True)
         else:
             await q.edit_message_text("Ошибка выбора темы")
         return
