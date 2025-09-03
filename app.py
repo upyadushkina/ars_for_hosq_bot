@@ -94,8 +94,8 @@ def person_card(row):
     blocks: List[str] = []
     if name: blocks.append(name)
     if role: blocks.append(role)
-    if bio: blocks.append(f"✏️bio: {bio}")
-    if tip: blocks.append(f"💡tip: {tip}")
+    if bio: blocks.append(f"ℹ️ {bio}")
+    if tip: blocks.append(f"💬 {tip}")
     inst_block = []
     if inst: inst_block.append(inst)
     if inst_link: inst_block.append(inst_link)
@@ -194,7 +194,7 @@ def format_people_times(rows):
         loc = _clean(r.get("location"))
         if not nm or not isinstance(st, datetime) or not isinstance(en, datetime):
             continue
-        entry = f"{st:%d.%m %H:%M}–{en:%H:%M}\n📍 {loc}"
+        entry = f"🕒 {st:%d.%m %H:%M}–{en:%H:%M}\n📍 {loc}"
         by_name.setdefault(nm, []).append(entry)
     lines: List[str] = []
     for nm in sorted(by_name.keys(), key=lambda s: s.lower()):
@@ -223,10 +223,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Главное меню:",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("🔎 Поиск по имени", callback_data="name:menu")],
-            [InlineKeyboardButton("📍 По локации", callback_data="ms:loc_menu")],
-            [InlineKeyboardButton("🕰 По времени", callback_data="ms:time_menu")],
-            [InlineKeyboardButton("🏷️ По теме", callback_data="ms:topic_menu")],
-            [InlineKeyboardButton("🎫 По ивенту", callback_data="ms:event_menu")],
+            [InlineKeyboardButton("📍 По локации (meet slots)", callback_data="ms:loc_menu")],
+            [InlineKeyboardButton("🕒 По времени (meet slots)", callback_data="ms:time_menu")],
+            [InlineKeyboardButton("🏷️ По теме (meet slots)", callback_data="ms:topic_menu")],
+            [InlineKeyboardButton("🎫 По ивенту (meet slots)", callback_data="ms:event_menu")],
         ])
     )
 
@@ -264,10 +264,10 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Главное меню:",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔎 Поиск по имени", callback_data="name:menu")],
-                [InlineKeyboardButton("📍 По локации", callback_data="ms:loc_menu")],
-                [InlineKeyboardButton("🕰 По времени", callback_data="ms:time_menu")],
-                [InlineKeyboardButton("🏷️ По теме", callback_data="ms:topic_menu")],
-                [InlineKeyboardButton("🎫 По ивенту", callback_data="ms:event_menu")],
+                [InlineKeyboardButton("📍 По локации (meet slots)", callback_data="ms:loc_menu")],
+                [InlineKeyboardButton("🕒 По времени (meet slots)", callback_data="ms:time_menu")],
+                [InlineKeyboardButton("🏷️ По теме (meet slots)", callback_data="ms:topic_menu")],
+                [InlineKeyboardButton("🎫 По ивенту (meet slots)", callback_data="ms:event_menu")],
             ])
         )
         return
@@ -277,7 +277,7 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.edit_message_text(
             "Как искать по имени?",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔤 Имена в алфавитном порядке (поиск по букве)", callback_data="name:alpha")],
+                [InlineKeyboardButton("🔤 Имена в алфавитном порядке", callback_data="name:alpha")],
                 [InlineKeyboardButton("⌨️ Введите имя", callback_data="name:typing")],
                 [InlineKeyboardButton("⬅️ Назад", callback_data="back:home")],
             ]),
@@ -435,7 +435,7 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ---------- MEET SLOTS: TIME ----------
     if data == "ms:time_menu":
-        dates = ["WED 03.09", "THU 04.09", "FRI 05.09", "SAT 06.09", "SUN 07.09"]
+        dates = ["03.09", "04.09", "05.09", "06.09", "07.09"]
         rows = []
         row = []
         for d in dates:
