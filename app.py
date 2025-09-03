@@ -29,7 +29,7 @@ def load_people_df():
         return df
     except Exception as e:
         log.warning("Failed to load people CSV: %s", e)
-        return pd.DataFrame(columns=["Name", "Institution", "Festival Role", "Role", "Where to Meet", "Attendance", "Bio", "Conversation Tip", "Institution Link"])
+        return pd.DataFrame(columns=["Name", "Institution", "Festival Role", "Role", "Attendance", "Bio", "Conversation Tip", "Institution Link"])
 
 PEOPLE_DF = load_people_df()
 
