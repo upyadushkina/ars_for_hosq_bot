@@ -469,6 +469,25 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton("🏷️ По теме", callback_data="ms:topic_menu")],
                 [InlineKeyboardButton("🎫 По ивенту", callback_data="ms:event_menu")],
                 [InlineKeyboardButton("📅 Моё расписание", callback_data="schedule:menu")],
+                [InlineKeyboardButton("🔄 Перезапустить", callback_data="restart:bot")],
+            ])
+        )
+        return
+
+    # ---------- RESTART BOT ----------
+    if data == "restart:bot":
+        # Clear user data to reset the bot state
+        context.user_data.clear()
+        await q.edit_message_text(
+            "🔄 Бот перезапущен!\n\nГлавное меню:",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔎 Поиск по имени", callback_data="name:menu")],
+                [InlineKeyboardButton("📍 По локации", callback_data="ms:loc_menu")],
+                [InlineKeyboardButton("🕒 По времени", callback_data="ms:time_menu")],
+                [InlineKeyboardButton("🏷️ По теме", callback_data="ms:topic_menu")],
+                [InlineKeyboardButton("🎫 По ивенту", callback_data="ms:event_menu")],
+                [InlineKeyboardButton("📅 Моё расписание", callback_data="schedule:menu")],
+                [InlineKeyboardButton("🔄 Перезапустить", callback_data="restart:bot")],
             ])
         )
         return
@@ -481,7 +500,7 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton("🔤 Имена в алфавитном порядке", callback_data="name:alpha")],
                 [InlineKeyboardButton("⌨️ Введите имя", callback_data="name:typing")],
                 [InlineKeyboardButton("⬅️ Назад", callback_data="back:home")],
-                [InlineKeyboardButton("🏠 Главное меню", callback_data="home:menu")],
+                [InlineKeyboardButton("🔄 Перезапустить", callback_data="restart:bot")],
             ]),
         )
         return
@@ -584,7 +603,7 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 rows.append(row); row = []
         if row: rows.append(row)
         rows.append([InlineKeyboardButton("⬅️ Назад", callback_data="back:home")])
-        rows.append([InlineKeyboardButton("🏠 Главное меню", callback_data="home:menu")])
+        rows.append([InlineKeyboardButton("🔄 Перезапустить", callback_data="restart:bot")])
         await q.edit_message_text("Где ты сейчас?", reply_markup=InlineKeyboardMarkup(rows))
         return
 
@@ -645,7 +664,7 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
             row.append(InlineKeyboardButton(d, callback_data=f"ms:time_date#{d}"))
         rows.append(row)
         rows.append([InlineKeyboardButton("⬅️ Назад", callback_data="back:home")])
-        rows.append([InlineKeyboardButton("🏠 Главное меню", callback_data="home:menu")])
+        rows.append([InlineKeyboardButton("🔄 Перезапустить", callback_data="restart:bot")])
         await q.edit_message_text("Выбери дату:", reply_markup=InlineKeyboardMarkup(rows))
         return
 
@@ -719,7 +738,7 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 rows.append(row); row = []
         if row: rows.append(row)
         rows.append([InlineKeyboardButton("⬅️ Назад", callback_data="back:home")])
-        rows.append([InlineKeyboardButton("🏠 Главное меню", callback_data="home:menu")])
+        rows.append([InlineKeyboardButton("🔄 Перезапустить", callback_data="restart:bot")])
         await q.edit_message_text("Выбери тему:", reply_markup=InlineKeyboardMarkup(rows))
         return
 
@@ -782,7 +801,7 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 rows.append(row); row = []
         if row: rows.append(row)
         rows.append([InlineKeyboardButton("⬅️ Назад", callback_data="back:home")])
-        rows.append([InlineKeyboardButton("🏠 Главное меню", callback_data="home:menu")])
+        rows.append([InlineKeyboardButton("🔄 Перезапустить", callback_data="restart:bot")])
         await q.edit_message_text("Выбери ивент:", reply_markup=InlineKeyboardMarkup(rows))
         return
 
@@ -842,7 +861,7 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "В расписании нет событий.",
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("⬅️ Назад", callback_data="back:home")],
-                    [InlineKeyboardButton("🏠 Главное меню", callback_data="home:menu")]
+                    [InlineKeyboardButton("🔄 Перезапустить", callback_data="restart:bot")]
                 ]),
             )
             return
@@ -854,7 +873,7 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 rows.append(row); row = []
         if row: rows.append(row)
         rows.append([InlineKeyboardButton("⬅️ Назад", callback_data="back:home")])
-        rows.append([InlineKeyboardButton("🏠 Главное меню", callback_data="home:menu")])
+        rows.append([InlineKeyboardButton("🔄 Перезапустить", callback_data="restart:bot")])
         await q.edit_message_text("Выбери дату:", reply_markup=InlineKeyboardMarkup(rows))
         return
 
