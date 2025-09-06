@@ -9,6 +9,7 @@ from fastapi import FastAPI, Request, Header, HTTPException
 from fastapi.responses import PlainTextResponse, JSONResponse
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
+from telegram.error import TimedOut, NetworkError, BadRequest
 
 # ---------- logging ----------
 logging.basicConfig(level=logging.INFO)
@@ -103,6 +104,38 @@ def person_card(row):
     if contact: blocks.append(f"📱inst: {contact}")
     return "\n\n".join(blocks)
 
+async def safe_send_message(message, text, **kwargs):
+    """Safely send a message with error handling"""
+    try:
+        return await message.reply_text(text, **kwargs)
+    except (TimedOut, NetworkError) as e:
+        log.warning("Network error sending message: %s", e)
+        # Try again with a simpler message
+        try:
+            return await message.reply_text("Сообщение временно недоступно. Попробуйте еще раз.")
+        except Exception:
+            log.error("Failed to send fallback message")
+            return None
+    except Exception as e:
+        log.error("Error sending message: %s", e)
+        return None
+
+async def safe_edit_message(query, text, **kwargs):
+    """Safely edit a message with error handling"""
+    try:
+        return await query.edit_message_text(text, **kwargs)
+    except (TimedOut, NetworkError) as e:
+        log.warning("Network error editing message: %s", e)
+        # Try to send a new message instead
+        try:
+            return await query.message.reply_text("Обновление временно недоступно. Попробуйте еще раз.")
+        except Exception:
+            log.error("Failed to send fallback message")
+            return None
+    except Exception as e:
+        log.error("Error editing message: %s", e)
+        return None
+
 async def send_person_card(message, row):
     caption = person_card(row)
     photo = _clean(row.get("Photo")) or _clean(row.get("photo"))
@@ -112,7 +145,7 @@ async def send_person_card(message, row):
             return
         except Exception as e:
             log.warning("Photo send failed for %s: %s", _clean(row.get("Name")), e)
-    await message.reply_text(caption, disable_web_page_preview=True)
+    await safe_send_message(message, caption, disable_web_page_preview=True)
 
 # =============================================
 #        B) MEET SLOTS (meet_slots.csv)
@@ -371,17 +404,27 @@ async def on_shutdown():
     await application.shutdown()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "Главное меню:",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔎 Поиск по имени", callback_data="name:menu")],
-            [InlineKeyboardButton("📍 По локации", callback_data="ms:loc_menu")],
-            [InlineKeyboardButton("🕒 По времени", callback_data="ms:time_menu")],
-            [InlineKeyboardButton("🏷️ По теме", callback_data="ms:topic_menu")],
-            [InlineKeyboardButton("🎫 По ивенту", callback_data="ms:event_menu")],
-            [InlineKeyboardButton("📅 Моё расписание", callback_data="schedule:menu")],
-        ])
-    )
+    try:
+        await update.message.reply_text(
+            "Главное меню:",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔎 Поиск по имени", callback_data="name:menu")],
+                [InlineKeyboardButton("📍 По локации", callback_data="ms:loc_menu")],
+                [InlineKeyboardButton("🕒 По времени", callback_data="ms:time_menu")],
+                [InlineKeyboardButton("🏷️ По теме", callback_data="ms:topic_menu")],
+                [InlineKeyboardButton("🎫 По ивенту", callback_data="ms:event_menu")],
+                [InlineKeyboardButton("📅 Моё расписание", callback_data="schedule:menu")],
+            ])
+        )
+    except (TimedOut, NetworkError) as e:
+        log.warning("Network error in start command: %s", e)
+        # Try to send a simple text message without keyboard
+        try:
+            await update.message.reply_text("Главное меню загружается... Попробуйте /start еще раз.")
+        except Exception:
+            log.error("Failed to send fallback message")
+    except Exception as e:
+        log.error("Unexpected error in start command: %s", e)
 
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get("expect_name_typing"):
@@ -409,7 +452,11 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
-    await q.answer()
+    try:
+        await q.answer()
+    except Exception as e:
+        log.warning("Failed to answer callback query: %s", e)
+    
     data = q.data or ""
 
     if data == "back:home":
@@ -973,10 +1020,26 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb_rows), disable_web_page_preview=True)
         return
 
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle errors that occur during bot operation"""
+    log.error("Exception while handling an update:", exc_info=context.error)
+    
+    # Try to send a user-friendly error message
+    if update and update.effective_message:
+        try:
+            await update.effective_message.reply_text(
+                "Произошла ошибка. Попробуйте еще раз или используйте /start для перезапуска."
+            )
+        except Exception:
+            log.error("Failed to send error message to user")
+
 # ====== handlers registration ======
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CallbackQueryHandler(on_cb))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
+
+# Add error handler
+application.add_error_handler(error_handler)
 
 # ====== FastAPI endpoints ======
 @app.get("/", response_class=PlainTextResponse)
