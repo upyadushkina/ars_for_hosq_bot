@@ -183,6 +183,158 @@ def load_meet_df():
 
 MEET_DF = load_meet_df()
 
+# =============================================
+#        C) PERSONAL SCHEDULE (ars_schedule.csv)
+# =============================================
+SCHEDULE_CSV_PATH = os.getenv("SCHEDULE_CSV", "ars_schedule.csv")
+
+def load_schedule_df():
+    try:
+        df = pd.read_csv(SCHEDULE_CSV_PATH)
+    except Exception as e:
+        log.warning("Failed to load schedule CSV: %s", e)
+        return pd.DataFrame(columns=[
+            "event_name", "people", "date", "time start", "time finish", 
+            "event_description", "event_type", "link_to_event", "where", "registration_status"
+        ])
+
+    # Normalize column names
+    col_name = next((c for c in df.columns if c.lower() == "event_name"), None)
+    col_people = next((c for c in df.columns if c.lower() == "people"), None)
+    col_date = next((c for c in df.columns if c.lower().strip() == "date"), None)
+    col_start = next((c for c in df.columns if c.lower().startswith("time start")), None)
+    col_finish = next((c for c in df.columns if c.lower().startswith("time finish")), None)
+    col_desc = next((c for c in df.columns if "description" in c.lower()), None)
+    col_type = next((c for c in df.columns if "type" in c.lower()), None)
+    col_link = next((c for c in df.columns if "link" in c.lower()), None)
+    col_where = next((c for c in df.columns if c.lower().strip() == "where"), None)
+    col_reg = next((c for c in df.columns if "registration" in c.lower()), None)
+
+    out = pd.DataFrame()
+    out["event_name"] = df[col_name] if col_name else ""
+    out["people"] = df[col_people] if col_people else ""
+    out["date_raw"] = df[col_date] if col_date else ""
+    out["time_start"] = df[col_start] if col_start else ""
+    out["time_finish"] = df[col_finish] if col_finish else ""
+    out["event_description"] = df[col_desc] if col_desc else ""
+    out["event_type"] = df[col_type] if col_type else ""
+    out["link_to_event"] = df[col_link] if col_link else ""
+    out["where"] = df[col_where] if col_where else ""
+    out["registration_status"] = df[col_reg] if col_reg else ""
+
+    # Parse dates and times
+    starts, ends, dates, spans = [], [], [], []
+    for d, ts, tf in zip(out["date_raw"], out["time_start"], out["time_finish"]):
+        m = re.match(r"(\d{1,2})\.(\d{1,2})", str(d).strip())
+        if not m:
+            starts.append(None); ends.append(None); dates.append(""); spans.append(""); continue
+        dd, mm = map(int, m.groups())
+        try:
+            h1, m1 = map(int, str(ts).split(":"))
+            h2, m2 = map(int, str(tf).split(":"))
+        except Exception:
+            starts.append(None); ends.append(None); dates.append(""); spans.append(""); continue
+        st = datetime(MEET_YEAR, mm, dd, h1, m1, tzinfo=MEET_TZ)
+        en = datetime(MEET_YEAR, mm, dd, h2, m2, tzinfo=MEET_TZ)
+        starts.append(st); ends.append(en)
+        dates.append(f"{st:%d.%m}")
+        spans.append(f"{st:%H:%M}–{en:%H:%M}")
+    
+    out["start_dt"] = starts
+    out["end_dt"] = ends
+    out["date"] = dates
+    out["timespan"] = spans
+    return out
+
+SCHEDULE_DF = load_schedule_df()
+
+def get_schedule_dates():
+    """Get unique dates from schedule"""
+    dates = sorted({d for d in SCHEDULE_DF["date"].dropna() if d})
+    return dates
+
+def get_schedule_events_by_date(date):
+    """Get all events for a specific date"""
+    return SCHEDULE_DF[SCHEDULE_DF["date"] == date].sort_values("start_dt")
+
+def get_schedule_events_by_hour(date, hour):
+    """Get events that include a specific hour on a specific date"""
+    dd, mm = map(int, date.split("."))
+    qdt = datetime(MEET_YEAR, mm, dd, hour, 0, tzinfo=MEET_TZ)
+    subset = SCHEDULE_DF[
+        (SCHEDULE_DF["date"] == date) &
+        (SCHEDULE_DF["start_dt"].notna()) & (SCHEDULE_DF["end_dt"].notna()) &
+        (SCHEDULE_DF["start_dt"] <= qdt) & (qdt < SCHEDULE_DF["end_dt"])
+    ]
+    return subset.sort_values("start_dt")
+
+def format_schedule_events(rows):
+    """Format schedule events for display"""
+    if rows is None or len(rows) == 0:
+        return "Ничего не найдено."
+    
+    lines = []
+    for _, r in rows.iterrows():
+        name = _clean(r.get("event_name"))
+        timespan = _clean(r.get("timespan"))
+        where = _clean(r.get("where"))
+        if name and timespan:
+            line = f"{timespan}"
+            if where:
+                line += f"\n📍 {where}"
+            lines.append(line)
+    
+    return "\n\n".join(lines) if lines else "Ничего не найдено."
+
+def format_schedule_event_card(row):
+    """Format a single schedule event card"""
+    name = _clean(row.get("event_name"))
+    timespan = _clean(row.get("timespan"))
+    where = _clean(row.get("where"))
+    event_type = _clean(row.get("event_type"))
+    description = _clean(row.get("event_description"))
+    people = _clean(row.get("people"))
+    registration = _clean(row.get("registration_status"))
+    link = _clean(row.get("link_to_event"))
+
+    blocks = []
+    if name: blocks.append(f"🎫 {name}")
+    if timespan: blocks.append(f"🕒 {timespan}")
+    if where: blocks.append(f"📍 {where}")
+    if event_type: blocks.append(f"🏷️ {event_type}")
+    if description: blocks.append(f"📝 {description}")
+    if people: blocks.append(f"👥 {people}")
+    if registration: blocks.append(f"📋 {registration}")
+    if link: blocks.append(f"🔗 {link}")
+    
+    return "\n\n".join(blocks)
+
+def get_people_from_schedule_event(row):
+    """Get people from schedule event that exist in PEOPLE_DF"""
+    people_str = _clean(row.get("people"))
+    if not people_str:
+        return []
+    
+    # Split people by comma and clean names
+    people_names = [name.strip() for name in people_str.split(",") if name.strip()]
+    found_people = []
+    
+    for person_name in people_names:
+        # Try to find exact match first
+        matches = PEOPLE_DF[PEOPLE_DF["Name"].str.strip().str.lower() == person_name.strip().lower()]
+        if not matches.empty:
+            found_people.append(matches.iloc[0])
+            continue
+        
+        # Try partial match
+        for _, person_row in PEOPLE_DF.iterrows():
+            person_full_name = _clean(person_row.get("Name"))
+            if person_name.lower() in person_full_name.lower() or person_full_name.lower() in person_name.lower():
+                found_people.append(person_row)
+                break
+    
+    return found_people
+
 def format_people_times(rows):
     if rows is None or len(rows) == 0:
         return "Ничего не найдено."
@@ -227,6 +379,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🕒 По времени", callback_data="ms:time_menu")],
             [InlineKeyboardButton("🏷️ По теме", callback_data="ms:topic_menu")],
             [InlineKeyboardButton("🎫 По ивенту", callback_data="ms:event_menu")],
+            [InlineKeyboardButton("📅 Моё расписание", callback_data="schedule:menu")],
         ])
     )
 
@@ -268,6 +421,7 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton("🕒 По времени", callback_data="ms:time_menu")],
                 [InlineKeyboardButton("🏷️ По теме", callback_data="ms:topic_menu")],
                 [InlineKeyboardButton("🎫 По ивенту", callback_data="ms:event_menu")],
+                [InlineKeyboardButton("📅 Моё расписание", callback_data="schedule:menu")],
             ])
         )
         return
@@ -626,6 +780,197 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await q.edit_message_text("Не удалось найти человека.")
         else:
             await q.edit_message_text("Не удалось найти человека.")
+        return
+
+    # ---------- SCHEDULE ----------
+    if data == "schedule:menu":
+        dates = get_schedule_dates()
+        if not dates:
+            await q.edit_message_text(
+                "В расписании нет событий.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Назад", callback_data="back:home")]]),
+            )
+            return
+        
+        rows, row = [], []
+        for date in dates:
+            row.append(InlineKeyboardButton(date, callback_data=f"schedule:date#{date}"))
+            if len(row) == 2:
+                rows.append(row); row = []
+        if row: rows.append(row)
+        rows.append([InlineKeyboardButton("⬅️ Назад", callback_data="back:home")])
+        await q.edit_message_text("Выбери дату:", reply_markup=InlineKeyboardMarkup(rows))
+        return
+
+    if data.startswith("schedule:date#"):
+        date = data.split("#", 1)[1]
+        hours = [f"{h:02d}:00" for h in list(range(10, 24)) + [0]]
+        rows, row = [], []
+        
+        # Add "full day" button first
+        row.append(InlineKeyboardButton("📅 Расписание на весь день", callback_data=f"schedule:fullday#{date}"))
+        if len(row) == 2:
+            rows.append(row); row = []
+        
+        for h in hours:
+            row.append(InlineKeyboardButton(h, callback_data=f"schedule:hour#{date}#{h[:2]}"))
+            if len(row) == 4:
+                rows.append(row); row = []
+        if row: rows.append(row)
+        rows.append([InlineKeyboardButton("⬅️ Назад к датам", callback_data="schedule:menu")])
+        await q.edit_message_text(f"Выбери время для {date}:", reply_markup=InlineKeyboardMarkup(rows))
+        return
+
+    if data.startswith("schedule:hour#"):
+        _, date, hour_str = data.split("#")
+        hour = int(hour_str)
+        events = get_schedule_events_by_hour(date, hour)
+        
+        if events.empty:
+            await q.edit_message_text(
+                f"На {date} в {hour:02d}:00 нет событий.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Назад", callback_data=f"schedule:date#{date}")]]),
+            )
+            return
+        
+        text = f"{date} {hour:02d}:00\n\n" + format_schedule_events(events)
+        records = events.reset_index().to_dict("records")
+        context.user_data["schedule_results"] = records
+        context.user_data["schedule_prev_date"] = date
+        context.user_data["schedule_prev_hour"] = hour
+        
+        kb_rows, r = [], []
+        for i, event in enumerate(records):
+            event_name = _clean(event.get("event_name", ""))
+            r.append(InlineKeyboardButton(event_name[:30] or "—", callback_data=f"schedule:event#{i}"))
+            if len(r) == 2:
+                kb_rows.append(r); r = []
+        if r: kb_rows.append(r)
+        kb_rows.append([InlineKeyboardButton("⬅️ Назад к времени", callback_data=f"schedule:date#{date}")])
+        await q.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb_rows), disable_web_page_preview=True)
+        return
+
+    if data.startswith("schedule:fullday#"):
+        date = data.split("#", 1)[1]
+        events = get_schedule_events_by_date(date)
+        
+        if events.empty:
+            await q.edit_message_text(
+                f"На {date} нет событий.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Назад", callback_data=f"schedule:date#{date}")]]),
+            )
+            return
+        
+        text = f"Расписание на {date}\n\n" + format_schedule_events(events)
+        records = events.reset_index().to_dict("records")
+        context.user_data["schedule_results"] = records
+        context.user_data["schedule_prev_date"] = date
+        context.user_data["schedule_prev_hour"] = "fullday"
+        
+        kb_rows, r = [], []
+        for i, event in enumerate(records):
+            event_name = _clean(event.get("event_name", ""))
+            r.append(InlineKeyboardButton(event_name[:30] or "—", callback_data=f"schedule:event#{i}"))
+            if len(r) == 2:
+                kb_rows.append(r); r = []
+        if r: kb_rows.append(r)
+        kb_rows.append([InlineKeyboardButton("⬅️ Назад к времени", callback_data=f"schedule:date#{date}")])
+        await q.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb_rows), disable_web_page_preview=True)
+        return
+
+    if data.startswith("schedule:event#"):
+        try:
+            idx = int(data.split("#", 1)[1])
+        except Exception:
+            idx = -1
+        
+        records = context.user_data.get("schedule_results", [])
+        if 0 <= idx < len(records):
+            event_record = records[idx]
+            # Get the actual row from SCHEDULE_DF
+            event_row = SCHEDULE_DF.loc[event_record["index"]]
+            
+            # Format and send event card
+            event_card = format_schedule_event_card(event_row)
+            await q.message.reply_text(event_card, disable_web_page_preview=True)
+            
+            # Get people from this event
+            people = get_people_from_schedule_event(event_row)
+            
+            if people:
+                kb_rows, r = [], []
+                for i, person in enumerate(people):
+                    person_name = _clean(person.get("Name", ""))
+                    r.append(InlineKeyboardButton(person_name[:30] or "—", callback_data=f"schedule:person#{idx}#{i}"))
+                    if len(r) == 2:
+                        kb_rows.append(r); r = []
+                if r: kb_rows.append(r)
+                kb_rows.append([InlineKeyboardButton("⬅️ Назад к событиям", callback_data="schedule:back_to_events")])
+                await q.message.reply_text("Люди на этом событии:", reply_markup=InlineKeyboardMarkup(kb_rows))
+            else:
+                await q.message.reply_text(
+                    "Что дальше?",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("⬅️ Назад к событиям", callback_data="schedule:back_to_events")],
+                    ]),
+                )
+        else:
+            await q.edit_message_text("Не удалось найти событие.")
+        return
+
+    if data.startswith("schedule:person#"):
+        try:
+            event_idx, person_idx = map(int, data.split("#")[1:])
+        except Exception:
+            await q.edit_message_text("Ошибка выбора человека.")
+            return
+        
+        records = context.user_data.get("schedule_results", [])
+        if 0 <= event_idx < len(records):
+            event_record = records[event_idx]
+            event_row = SCHEDULE_DF.loc[event_record["index"]]
+            people = get_people_from_schedule_event(event_row)
+            
+            if 0 <= person_idx < len(people):
+                person = people[person_idx]
+                await send_person_card(q.message, person)
+                await q.message.reply_text(
+                    "Что дальше?",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("⬅️ Назад к людям", callback_data=f"schedule:event#{event_idx}")],
+                        [InlineKeyboardButton("⬅️ Назад к событиям", callback_data="schedule:back_to_events")],
+                    ]),
+                )
+            else:
+                await q.edit_message_text("Не удалось найти человека.")
+        else:
+            await q.edit_message_text("Не удалось найти событие.")
+        return
+
+    if data == "schedule:back_to_events":
+        records = context.user_data.get("schedule_results", [])
+        date = context.user_data.get("schedule_prev_date")
+        hour = context.user_data.get("schedule_prev_hour")
+        
+        if not records or not date:
+            await q.edit_message_text("Ошибка навигации.")
+            return
+        
+        if hour == "fullday":
+            text = f"Расписание на {date}\n\n" + format_schedule_events(SCHEDULE_DF[SCHEDULE_DF["date"] == date])
+        else:
+            events = get_schedule_events_by_hour(date, int(hour))
+            text = f"{date} {int(hour):02d}:00\n\n" + format_schedule_events(events)
+        
+        kb_rows, r = [], []
+        for i, event in enumerate(records):
+            event_name = _clean(event.get("event_name", ""))
+            r.append(InlineKeyboardButton(event_name[:30] or "—", callback_data=f"schedule:event#{i}"))
+            if len(r) == 2:
+                kb_rows.append(r); r = []
+        if r: kb_rows.append(r)
+        kb_rows.append([InlineKeyboardButton("⬅️ Назад к времени", callback_data=f"schedule:date#{date}")])
+        await q.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb_rows), disable_web_page_preview=True)
         return
 
 # ====== handlers registration ======
