@@ -312,7 +312,7 @@ def format_schedule_events(rows):
         timespan = _clean(r.get("timespan"))
         where = _clean(r.get("where"))
         if name and timespan:
-            line = f"{timespan}"
+            line = f"🎫 {name}\n{timespan}"
             if where:
                 line += f"\n📍 {where}"
             lines.append(line)
@@ -331,8 +331,8 @@ def format_schedule_event_card(row):
     link = _clean(row.get("link_to_event"))
 
     blocks = []
-    if name: blocks.append(f"🎫 {name}")
-    if timespan: blocks.append(f"🕒 {timespan}")
+    if name: blocks.append(f"{name}")
+    if timespan: blocks.append(f"{timespan}")
     if where: blocks.append(f"📍 {where}")
     if event_type: blocks.append(f"🏷️ {event_type}")
     if description: blocks.append(f"📝 {description}")
@@ -855,7 +855,7 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
         rows, row = [], []
         
         # Add "full day" button first
-        row.append(InlineKeyboardButton("📅 Расписание на весь день", callback_data=f"schedule:fullday#{date}"))
+        row.append(InlineKeyboardButton("📅 Весь день", callback_data=f"schedule:fullday#{date}"))
         if len(row) == 2:
             rows.append(row); row = []
         
