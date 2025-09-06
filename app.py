@@ -331,8 +331,8 @@ def format_schedule_event_card(row):
     link = _clean(row.get("link_to_event"))
 
     blocks = []
-    if name: blocks.append(f"{name}")
-    if timespan: blocks.append(f"{timespan}")
+    if name: blocks.append(f"🎫 {name}")
+    if timespan: blocks.append(f"🕒 {timespan}")
     if where: blocks.append(f"📍 {where}")
     if event_type: blocks.append(f"🏷️ {event_type}")
     if description: blocks.append(f"📝 {description}")
@@ -459,7 +459,7 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     data = q.data or ""
 
-    if data == "back:home":
+    if data == "back:home" or data == "home:menu":
         await q.edit_message_text(
             "Главное меню:",
             reply_markup=InlineKeyboardMarkup([
@@ -481,6 +481,7 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton("🔤 Имена в алфавитном порядке", callback_data="name:alpha")],
                 [InlineKeyboardButton("⌨️ Введите имя", callback_data="name:typing")],
                 [InlineKeyboardButton("⬅️ Назад", callback_data="back:home")],
+                [InlineKeyboardButton("🏠 Главное меню", callback_data="home:menu")],
             ]),
         )
         return
@@ -583,6 +584,7 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 rows.append(row); row = []
         if row: rows.append(row)
         rows.append([InlineKeyboardButton("⬅️ Назад", callback_data="back:home")])
+        rows.append([InlineKeyboardButton("🏠 Главное меню", callback_data="home:menu")])
         await q.edit_message_text("Где ты сейчас?", reply_markup=InlineKeyboardMarkup(rows))
         return
 
@@ -643,6 +645,7 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
             row.append(InlineKeyboardButton(d, callback_data=f"ms:time_date#{d}"))
         rows.append(row)
         rows.append([InlineKeyboardButton("⬅️ Назад", callback_data="back:home")])
+        rows.append([InlineKeyboardButton("🏠 Главное меню", callback_data="home:menu")])
         await q.edit_message_text("Выбери дату:", reply_markup=InlineKeyboardMarkup(rows))
         return
 
@@ -716,6 +719,7 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 rows.append(row); row = []
         if row: rows.append(row)
         rows.append([InlineKeyboardButton("⬅️ Назад", callback_data="back:home")])
+        rows.append([InlineKeyboardButton("🏠 Главное меню", callback_data="home:menu")])
         await q.edit_message_text("Выбери тему:", reply_markup=InlineKeyboardMarkup(rows))
         return
 
@@ -778,6 +782,7 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 rows.append(row); row = []
         if row: rows.append(row)
         rows.append([InlineKeyboardButton("⬅️ Назад", callback_data="back:home")])
+        rows.append([InlineKeyboardButton("🏠 Главное меню", callback_data="home:menu")])
         await q.edit_message_text("Выбери ивент:", reply_markup=InlineKeyboardMarkup(rows))
         return
 
@@ -835,7 +840,10 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not dates:
             await q.edit_message_text(
                 "В расписании нет событий.",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Назад", callback_data="back:home")]]),
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("⬅️ Назад", callback_data="back:home")],
+                    [InlineKeyboardButton("🏠 Главное меню", callback_data="home:menu")]
+                ]),
             )
             return
         
@@ -846,6 +854,7 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 rows.append(row); row = []
         if row: rows.append(row)
         rows.append([InlineKeyboardButton("⬅️ Назад", callback_data="back:home")])
+        rows.append([InlineKeyboardButton("🏠 Главное меню", callback_data="home:menu")])
         await q.edit_message_text("Выбери дату:", reply_markup=InlineKeyboardMarkup(rows))
         return
 
