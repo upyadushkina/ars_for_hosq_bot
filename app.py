@@ -18,9 +18,9 @@ log = logging.getLogger("ae-bot")
 app = FastAPI()
 
 # =============================================
-#            A) PEOPLE (ars_2025_people.csv)
+#            A) PEOPLE (ars_2026_people.csv)
 # =============================================
-PEOPLE_CSV_PATH = os.getenv("PEOPLE_CSV", "ars_2025_people.csv")
+PEOPLE_CSV_PATH = os.getenv("PEOPLE_CSV", "ars_2026_people.csv")
 
 def load_people_df():
     try:
@@ -152,7 +152,7 @@ async def send_person_card(message, row):
 # =============================================
 MEET_CSV_PATH = os.getenv("MEET_SLOTS_CSV", "meet_slots.csv")
 MEET_TZ = ZoneInfo("Europe/Vienna")
-MEET_YEAR = 2025
+MEET_YEAR = 2026
 
 def _meet_norm_key(s: str) -> str:
     if not isinstance(s, str):
@@ -657,7 +657,7 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ---------- MEET SLOTS: TIME ----------
     if data == "ms:time_menu":
-        dates = ["03.09", "04.09", "05.09", "06.09", "07.09"]
+        dates = ["08.09", "09.09", "10.09", "11.09", "12.09", "13.09"]
         rows = []
         row = []
         for d in dates:
