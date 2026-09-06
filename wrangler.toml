@@ -2,3 +2,8 @@ name = "ars-for-hosq-bot"
 main = "worker.js"
 compatibility_date = "2026-09-01"
 workers_dev = true
+
+# Remove Durable Object left over from the old Containers deploy
+[[migrations]]
+tag = "v2-delete-botcontainer"
+deleted_classes = ["BotContainer"]
