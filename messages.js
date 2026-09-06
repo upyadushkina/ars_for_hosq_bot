@@ -24,6 +24,9 @@ export const T = {
   btn_back_locations: "⬅ назад к локациям",
   btn_loc_all: "все",
   btn_loc_unspecified: "без уточнения",
+  btn_loc_prev: "◀",
+  btn_loc_next: "▶",
+  btn_loc_page: "{page}/{pages}",
   btn_back_dates: "⬅ назад к датам",
   btn_back_hours: "⬅ назад к часам",
   btn_back_topics: "⬅ назад к темам",
@@ -55,6 +58,8 @@ export const T = {
   loc_pick_room: "{loc} — выбери зону:",
   loc_error: "ошибка выбора локации",
   loc_header: "локация: {loc}\n\n{list}",
+  loc_header_paged: "локация: {loc}\nстр. {page}/{pages}\n\n{list}",
+  loc_people_compact: "{n} человек на этой странице — выбери имя ниже:\n\n{list}",
 
   time_pick_date: "выбери дату:",
   time_pick_hour: "выбери время:",
