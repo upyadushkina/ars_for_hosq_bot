@@ -22,6 +22,8 @@ export const T = {
   btn_back_menu: "⬅ меню",
   btn_back_letters: "⬅ назад к буквам",
   btn_back_locations: "⬅ назад к локациям",
+  btn_loc_all: "все",
+  btn_loc_unspecified: "без уточнения",
   btn_back_dates: "⬅ назад к датам",
   btn_back_hours: "⬅ назад к часам",
   btn_back_topics: "⬅ назад к темам",
@@ -50,6 +52,7 @@ export const T = {
   what_next: "что дальше?",
 
   loc_menu_title: "где ты сейчас?",
+  loc_pick_room: "{loc} — выбери зону:",
   loc_error: "ошибка выбора локации",
   loc_header: "локация: {loc}\n\n{list}",
 
