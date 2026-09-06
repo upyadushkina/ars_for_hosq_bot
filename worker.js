@@ -604,31 +604,30 @@ function formatPeopleTimes(rows, { hideWhere = false } = {}) {
   const names = Object.keys(by).sort((a, b) => a.localeCompare(b));
   if (!names.length) return t("nothing_found");
 
-  let text = names
-    .map((nm) =>
-      t("people_times_person", { name: escHtml(nm), slots: by[nm].join("\n") })
-    )
-    .join("\n\n");
+  // Between people: blank line (ZWSP keeps Telegram from collapsing \n\n).
+  // Within a person, multiple slots also separated by a blank line.
+  const PEOPLE_SEP = "\n\n\u200B";
+  const SLOT_SEP = "\n\n\u200B";
+  const blocks = names.map((nm) =>
+    t("people_times_person", {
+      name: escHtml(nm),
+      slots: by[nm].join(SLOT_SEP),
+    })
+  );
 
+  let text = blocks.join(PEOPLE_SEP);
   if (text.length <= TG_TEXT_MAX) return text;
 
-  const compact = [];
-  for (const r of rows) {
-    if (!r.n) continue;
-    const key = hideWhere ? "people_times_compact_line" : "people_times_compact_line_where";
-    compact.push(
-      t(key, {
-        name: escHtml(r.n),
-        event: fmtEvent(r.e || r.tp, r.u),
-        date: fmtDate(r.d),
-        start: escHtml(r.s || t("dash")),
-        finish: escHtml(r.f || t("dash")),
-        where: escHtml(r.w || t("dash")),
-      })
-    );
+  // Keep the same multiline layout; drop trailing people if over Telegram limit
+  const kept = [];
+  for (const block of blocks) {
+    const next = kept.length ? `${kept.join(PEOPLE_SEP)}${PEOPLE_SEP}${block}` : block;
+    if (next.length > TG_TEXT_MAX - 5) break;
+    kept.push(block);
   }
-  text = compact.join("\n");
-  return text.length <= TG_TEXT_MAX ? text : clipTg(text, TG_TEXT_MAX);
+  if (!kept.length) return clipTg(blocks[0], TG_TEXT_MAX);
+  text = kept.join(PEOPLE_SEP);
+  return kept.length < blocks.length ? `${text}${PEOPLE_SEP}…` : text;
 }
 
 function formatScheduleEvents(rows) {
@@ -706,6 +705,28 @@ function schedAtHour(sched, dateKey, hour) {
     const q = mins(hour, 0);
     return start <= q && q < end;
   });
+}
+
+/** Hours shown in time menus: 10:00–23:00 + 00:00 */
+const CANDIDATE_HOURS = [...Array.from({ length: 14 }, (_, i) => i + 10), 0];
+
+function hoursWithMeet(meet, dateKey) {
+  return CANDIDATE_HOURS.filter((h) => meetAtHour(meet, dateKey, h).length > 0);
+}
+
+function hoursWithEventSearch(meet, sched, dateKey) {
+  return CANDIDATE_HOURS.filter((h) => eventsAtHour(meet, sched, dateKey, h).length > 0);
+}
+
+function hoursWithSched(sched, dateKey) {
+  return CANDIDATE_HOURS.filter((h) => schedAtHour(sched, dateKey, h).length > 0);
+}
+
+function hourButtons(hours, date, cbPrefix) {
+  return hours.map((h) => ({
+    text: `${String(h).padStart(2, "0")}:00`,
+    callback_data: `${cbPrefix}:${date}:${String(h).padStart(2, "0")}`,
+  }));
 }
 
 function findPersonByName(people, name) {
@@ -1040,7 +1061,9 @@ async function handleCallback(env, data, cq) {
 
   // ---- meet: time ----
   if (raw === "ms:time_menu") {
-    const rows = [FESTIVAL_DATES.map((d) => ({ text: d, callback_data: `ms:td:${d}` }))];
+    const dates = FESTIVAL_DATES.filter((d) => hoursWithMeet(meet, d).length);
+    const use = dates.length ? dates : FESTIVAL_DATES;
+    const rows = [use.map((d) => ({ text: d, callback_data: `ms:td:${d}` }))];
     rows.push([{ text: t("btn_back"), callback_data: "back:home" }]);
     await edit(t("time_pick_date"), { inline_keyboard: rows });
     return;
@@ -1048,12 +1071,14 @@ async function handleCallback(env, data, cq) {
 
   if (raw.startsWith("ms:td:")) {
     const date = raw.slice(6);
-    const hours = [...Array.from({ length: 14 }, (_, i) => i + 10), 0];
-    const buttons = hours.map((h) => ({
-      text: `${String(h).padStart(2, "0")}:00`,
-      callback_data: `ms:th:${date}:${String(h).padStart(2, "0")}`,
-    }));
-    const rows = btnRows(buttons, 4);
+    const hours = hoursWithMeet(meet, date);
+    if (!hours.length) {
+      await edit(t("time_empty_hours", { date: fmtDate(date) }), {
+        inline_keyboard: [[{ text: t("btn_back_dates"), callback_data: "ms:time_menu" }]],
+      });
+      return;
+    }
+    const rows = btnRows(hourButtons(hours, date, "ms:th"), 4);
     rows.push([{ text: t("btn_back_dates"), callback_data: "ms:time_menu" }]);
     await edit(t("time_pick_hour"), { inline_keyboard: rows });
     return;
@@ -1129,7 +1154,9 @@ async function handleCallback(env, data, cq) {
   }
 
   if (raw === "ms:ev:time") {
-    const rows = [FESTIVAL_DATES.map((d) => ({ text: d, callback_data: `ms:ev:td:${d}` }))];
+    const dates = FESTIVAL_DATES.filter((d) => hoursWithEventSearch(meet, sched, d).length);
+    const use = dates.length ? dates : FESTIVAL_DATES;
+    const rows = [use.map((d) => ({ text: d, callback_data: `ms:ev:td:${d}` }))];
     rows.push([{ text: t("btn_back_event_menu"), callback_data: "ms:event_menu" }]);
     await edit(t("event_time_pick_date"), { inline_keyboard: rows });
     return;
@@ -1137,12 +1164,14 @@ async function handleCallback(env, data, cq) {
 
   if (raw.startsWith("ms:ev:td:")) {
     const date = raw.slice("ms:ev:td:".length);
-    const hours = [...Array.from({ length: 14 }, (_, i) => i + 10), 0];
-    const buttons = hours.map((h) => ({
-      text: `${String(h).padStart(2, "0")}:00`,
-      callback_data: `ms:ev:th:${date}:${String(h).padStart(2, "0")}`,
-    }));
-    const rows = btnRows(buttons, 4);
+    const hours = hoursWithEventSearch(meet, sched, date);
+    if (!hours.length) {
+      await edit(t("time_empty_hours", { date: fmtDate(date) }), {
+        inline_keyboard: [[{ text: t("btn_back_dates"), callback_data: "ms:ev:time" }]],
+      });
+      return;
+    }
+    const rows = btnRows(hourButtons(hours, date, "ms:ev:th"), 4);
     rows.push([{ text: t("btn_back_dates"), callback_data: "ms:ev:time" }]);
     await edit(t("event_time_pick_hour"), { inline_keyboard: rows });
     return;
@@ -1209,14 +1238,18 @@ async function handleCallback(env, data, cq) {
 
   if (raw.startsWith("schedule:date:")) {
     const date = raw.slice("schedule:date:".length);
-    const hours = [...Array.from({ length: 14 }, (_, i) => i + 10), 0];
-    const buttons = [
-      { text: t("btn_full_day"), callback_data: `schedule:full:${date}` },
-      ...hours.map((h) => ({
-        text: `${String(h).padStart(2, "0")}:00`,
-        callback_data: `schedule:h:${date}:${String(h).padStart(2, "0")}`,
-      })),
-    ];
+    const hours = hoursWithSched(sched, date);
+    const buttons = [];
+    if (schedOnDate(sched, date).length) {
+      buttons.push({ text: t("btn_full_day"), callback_data: `schedule:full:${date}` });
+    }
+    buttons.push(...hourButtons(hours, date, "schedule:h"));
+    if (!buttons.length) {
+      await edit(t("time_empty_hours", { date: fmtDate(date) }), {
+        inline_keyboard: [[{ text: t("btn_back_dates"), callback_data: "schedule:menu" }]],
+      });
+      return;
+    }
     const rows = btnRows(buttons, 4);
     rows.push([{ text: t("btn_back_dates"), callback_data: "schedule:menu" }]);
     await edit(t("schedule_pick_time", { date: fmtDate(date) }), { inline_keyboard: rows });
