@@ -409,12 +409,7 @@ function meetAtSub(meet, parent, sub) {
 
 function locListText(subset, namesOnPage) {
   const pageRows = subset.filter((r) => namesOnPage.includes(clean(r.n)));
-  let list = formatPeopleTimes(pageRows);
-  if (list.length <= TG_TEXT_MAX) return list;
-  return t("loc_people_compact", {
-    n: namesOnPage.length,
-    list: namesOnPage.map((nm) => `👤 ${nm}`).join("\n"),
-  });
+  return formatPeopleTimes(pageRows, { hideWhere: true });
 }
 
 function showLocPeople(edit, people, subset, locLabel, backCb, pagePrefix, page = 0) {
@@ -538,25 +533,49 @@ function peopleOnEvent(meet, sched, eventName) {
   return out.filter((r) => r.n || r.e);
 }
 
-function formatPeopleTimes(rows) {
+function formatPeopleTimes(rows, { hideWhere = false } = {}) {
   if (!rows.length) return t("nothing_found");
   const by = {};
   for (const r of rows) {
     const name = r.n;
     if (!name) continue;
-    const line = t("people_times_slot", {
-      date: r.d,
-      start: r.s,
-      finish: r.f,
+    const slotKey = hideWhere ? "people_times_slot_noloc" : "people_times_slot";
+    const line = t(slotKey, {
+      date: r.d || t("dash"),
+      start: r.s || t("dash"),
+      finish: r.f || t("dash"),
       where: r.w || t("dash"),
       event: r.e || r.tp || t("dash"),
     });
     (by[name] ||= []).push(line);
   }
-  return Object.keys(by)
-    .sort((a, b) => a.localeCompare(b))
+  const names = Object.keys(by).sort((a, b) => a.localeCompare(b));
+  if (!names.length) return t("nothing_found");
+
+  let text = names
     .map((nm) => t("people_times_person", { name: nm, slots: by[nm].join("\n") }))
     .join("\n\n");
+
+  if (text.length <= TG_TEXT_MAX) return text;
+
+  // Dense one-line fallback when the full list is too long for Telegram
+  const compact = [];
+  for (const r of rows) {
+    if (!r.n) continue;
+    const key = hideWhere ? "people_times_compact_line" : "people_times_compact_line_where";
+    compact.push(
+      t(key, {
+        name: r.n,
+        event: r.e || r.tp || t("dash"),
+        date: r.d || t("dash"),
+        start: r.s || t("dash"),
+        finish: r.f || t("dash"),
+        where: r.w || t("dash"),
+      })
+    );
+  }
+  text = compact.join("\n");
+  return text.length <= TG_TEXT_MAX ? text : clipTg(text, TG_TEXT_MAX);
 }
 
 function formatScheduleEvents(rows) {
