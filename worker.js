@@ -39,6 +39,45 @@ function clean(v) {
   return (v == null ? "" : String(v)).trim();
 }
 
+function escHtml(v) {
+  return String(v == null ? "" : v)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+/** Bold date for list UIs (Telegram HTML). */
+function fmtDate(d) {
+  return `<b>${escHtml(d || t("dash"))}</b>`;
+}
+
+/** Event title as hyperlink when schedule has link_to_event. */
+function fmtEvent(name, url) {
+  const label = escHtml(name || t("dash"));
+  const href = clean(url);
+  if (href && /^https?:\/\//i.test(href)) {
+    const safeHref = href.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+    return `<a href="${safeHref}">${label}</a>`;
+  }
+  return label;
+}
+
+function eventLinkMap(sched) {
+  const map = new Map();
+  for (const r of sched) {
+    const e = clean(r.e);
+    const u = clean(r.u);
+    if (e && u && !map.has(e)) map.set(e, u);
+  }
+  return map;
+}
+
+function enrichMeetLinks(meet, linkMap) {
+  for (const r of meet) {
+    r.u = linkMap.get(clean(r.e)) || "";
+  }
+}
+
 function normHeader(h) {
   return clean(h).toLowerCase().replace(/\s+/g, " ");
 }
@@ -227,10 +266,13 @@ async function loadData(env, { force = false } = {}) {
     fetchSheetCsv(id, "meet"),
     fetchSheetCsv(id, "schedule"),
   ]);
+  const meet = mapMeet(parseCsv(meetTxt));
+  const sched = mapSched(parseCsv(schedTxt));
+  enrichMeetLinks(meet, eventLinkMap(sched));
   const data = {
     people: mapPeople(parseCsv(peopleTxt)),
-    meet: mapMeet(parseCsv(meetTxt)),
-    sched: mapSched(parseCsv(schedTxt)),
+    meet,
+    sched,
   };
   if (!data.people.length) throw new Error("people sheet is empty");
   CACHE = { data, loadedAt: Date.now(), source: id };
@@ -298,14 +340,14 @@ function splitName(name) {
 
 function personCard(p) {
   const blocks = [];
-  if (p.n) blocks.push(p.n);
-  if (p.r) blocks.push(p.r);
-  if (p.fr) blocks.push(t("person_festival_role", { value: p.fr }));
-  if (p.b) blocks.push(t("person_bio", { value: p.b }));
-  if (p.t) blocks.push(t("person_tip", { value: p.t }));
-  const inst = [p.i, p.l].filter(Boolean);
+  if (p.n) blocks.push(escHtml(p.n));
+  if (p.r) blocks.push(escHtml(p.r));
+  if (p.fr) blocks.push(t("person_festival_role", { value: escHtml(p.fr) }));
+  if (p.b) blocks.push(t("person_bio", { value: escHtml(p.b) }));
+  if (p.t) blocks.push(t("person_tip", { value: escHtml(p.t) }));
+  const inst = [p.i, p.l].filter(Boolean).map(escHtml);
   if (inst.length) blocks.push(inst.join("\n"));
-  if (p.c) blocks.push(t("person_contact", { value: p.c }));
+  if (p.c) blocks.push(t("person_contact", { value: escHtml(p.c) }));
   return blocks.join("\n\n");
 }
 
@@ -415,7 +457,7 @@ function locListText(subset, namesOnPage) {
 function showLocPeople(edit, people, subset, locLabel, backCb, pagePrefix, page = 0) {
   const names = uniqueSorted(subset.map((r) => r.n).filter(Boolean));
   if (!names.length) {
-    return edit(t("loc_header", { loc: locLabel, list: t("nothing_found") }), {
+    return edit(t("loc_header", { loc: escHtml(locLabel), list: t("nothing_found") }), {
       inline_keyboard: [[{ text: t("btn_back_locations"), callback_data: backCb }]],
     });
   }
@@ -426,12 +468,12 @@ function showLocPeople(edit, people, subset, locLabel, backCb, pagePrefix, page 
   const header =
     pages > 1
       ? t("loc_header_paged", {
-          loc: locLabel,
+          loc: escHtml(locLabel),
           page: p + 1,
           pages,
           list,
         })
-      : t("loc_header", { loc: locLabel, list });
+      : t("loc_header", { loc: escHtml(locLabel), list });
 
   const buttons = slice.map((nm) => {
     const idx = findPersonByName(people, nm);
@@ -523,11 +565,21 @@ function peopleOnEvent(meet, sched, eventName) {
         d: r.d,
         s: r.s,
         f: r.f,
+        u: r.u || "",
       });
       continue;
     }
     for (const nm of names) {
-      out.push({ n: nm, w: r.w, e: r.e, tp: r.e, d: r.d, s: r.s, f: r.f });
+      out.push({
+        n: nm,
+        w: r.w,
+        e: r.e,
+        tp: r.e,
+        d: r.d,
+        s: r.s,
+        f: r.f,
+        u: r.u || "",
+      });
     }
   }
   return out.filter((r) => r.n || r.e);
@@ -541,11 +593,11 @@ function formatPeopleTimes(rows, { hideWhere = false } = {}) {
     if (!name) continue;
     const slotKey = hideWhere ? "people_times_slot_noloc" : "people_times_slot";
     const line = t(slotKey, {
-      date: r.d || t("dash"),
-      start: r.s || t("dash"),
-      finish: r.f || t("dash"),
-      where: r.w || t("dash"),
-      event: r.e || r.tp || t("dash"),
+      date: fmtDate(r.d),
+      start: escHtml(r.s || t("dash")),
+      finish: escHtml(r.f || t("dash")),
+      where: escHtml(r.w || t("dash")),
+      event: fmtEvent(r.e || r.tp, r.u),
     });
     (by[name] ||= []).push(line);
   }
@@ -553,24 +605,25 @@ function formatPeopleTimes(rows, { hideWhere = false } = {}) {
   if (!names.length) return t("nothing_found");
 
   let text = names
-    .map((nm) => t("people_times_person", { name: nm, slots: by[nm].join("\n") }))
+    .map((nm) =>
+      t("people_times_person", { name: escHtml(nm), slots: by[nm].join("\n") })
+    )
     .join("\n\n");
 
   if (text.length <= TG_TEXT_MAX) return text;
 
-  // Dense one-line fallback when the full list is too long for Telegram
   const compact = [];
   for (const r of rows) {
     if (!r.n) continue;
     const key = hideWhere ? "people_times_compact_line" : "people_times_compact_line_where";
     compact.push(
       t(key, {
-        name: r.n,
-        event: r.e || r.tp || t("dash"),
-        date: r.d || t("dash"),
-        start: r.s || t("dash"),
-        finish: r.f || t("dash"),
-        where: r.w || t("dash"),
+        name: escHtml(r.n),
+        event: fmtEvent(r.e || r.tp, r.u),
+        date: fmtDate(r.d),
+        start: escHtml(r.s || t("dash")),
+        finish: escHtml(r.f || t("dash")),
+        where: escHtml(r.w || t("dash")),
       })
     );
   }
@@ -582,8 +635,13 @@ function formatScheduleEvents(rows) {
   if (!rows.length) return t("nothing_found");
   return rows
     .map((r) => {
-      let line = t("schedule_list_item", { name: r.e, start: r.s, finish: r.f });
-      if (r.w) line += t("schedule_list_where", { where: r.w });
+      let line = t("schedule_list_item", {
+        name: fmtEvent(r.e, r.u),
+        date: fmtDate(r.d),
+        start: escHtml(r.s || t("dash")),
+        finish: escHtml(r.f || t("dash")),
+      });
+      if (r.w) line += t("schedule_list_where", { where: escHtml(r.w) });
       return line;
     })
     .join("\n\n");
@@ -591,14 +649,25 @@ function formatScheduleEvents(rows) {
 
 function formatScheduleCard(r) {
   const blocks = [];
-  if (r.e) blocks.push(t("schedule_card_name", { value: r.e }));
-  if (r.s) blocks.push(t("schedule_card_time", { start: r.s, finish: r.f }));
-  if (r.w) blocks.push(t("schedule_card_where", { value: r.w }));
-  if (r.ty) blocks.push(t("schedule_card_type", { value: r.ty }));
-  if (r.ds) blocks.push(t("schedule_card_desc", { value: r.ds }));
-  if (r.p) blocks.push(t("schedule_card_people", { value: r.p }));
-  if (r.rg) blocks.push(t("schedule_card_reg", { value: r.rg }));
-  if (r.u) blocks.push(t("schedule_card_link", { value: r.u }));
+  if (r.e) blocks.push(t("schedule_card_name", { value: fmtEvent(r.e, r.u) }));
+  if (r.d) blocks.push(t("schedule_card_date", { value: fmtDate(r.d) }));
+  if (r.s) {
+    blocks.push(
+      t("schedule_card_time", {
+        start: escHtml(r.s),
+        finish: escHtml(r.f || t("dash")),
+      })
+    );
+  }
+  if (r.w) blocks.push(t("schedule_card_where", { value: escHtml(r.w) }));
+  if (r.ty) blocks.push(t("schedule_card_type", { value: escHtml(r.ty) }));
+  if (r.ds) blocks.push(t("schedule_card_desc", { value: escHtml(r.ds) }));
+  if (r.p) blocks.push(t("schedule_card_people", { value: escHtml(r.p) }));
+  if (r.rg) blocks.push(t("schedule_card_reg", { value: escHtml(r.rg) }));
+  // link is already on the event title when present
+  if (r.u && !/^https?:\/\//i.test(clean(r.u))) {
+    blocks.push(t("schedule_card_link", { value: escHtml(r.u) }));
+  }
   return blocks.join("\n\n");
 }
 
@@ -658,6 +727,7 @@ async function sendMessage(env, chatId, text, reply_markup) {
     chat_id: chatId,
     text: clipTg(text),
     reply_markup,
+    parse_mode: "HTML",
     disable_web_page_preview: true,
   });
 }
@@ -668,6 +738,7 @@ async function editMessage(env, chatId, messageId, text, reply_markup) {
     message_id: messageId,
     text: clipTg(text),
     reply_markup,
+    parse_mode: "HTML",
     disable_web_page_preview: true,
   };
   const res = await tg(env, "editMessageText", payload);
@@ -691,6 +762,7 @@ async function sendPerson(env, chatId, p) {
       chat_id: chatId,
       photo: p.ph,
       caption: caption.slice(0, 1024),
+      parse_mode: "HTML",
     });
     if (photo && photo.ok) return;
   }
@@ -790,7 +862,7 @@ async function handleCallback(env, data, cq) {
     } catch (err) {
       console.error(err);
       await edit(
-        t("settings_refresh_failed", { error: clean(err.message || err) }),
+        t("settings_refresh_failed", { error: escHtml(clean(err.message || err)) }),
         settingsKeyboard()
       );
     }
@@ -890,7 +962,7 @@ async function handleCallback(env, data, cq) {
     ];
     const rows = btnRows(buttons, 1);
     rows.push([{ text: t("btn_back_locations"), callback_data: "ms:loc_menu" }]);
-    await edit(t("loc_pick_room", { loc: parent }), { inline_keyboard: rows });
+    await edit(t("loc_pick_room", { loc: escHtml(parent) }), { inline_keyboard: rows });
     return;
   }
 
@@ -999,7 +1071,7 @@ async function handleCallback(env, data, cq) {
     });
     const rows = btnRows(buttons, 2);
     rows.push([{ text: t("btn_back_hours"), callback_data: `ms:td:${date}` }]);
-    await edit(t("time_header", { date, hour: hourLabel, list: formatPeopleTimes(subset) }), {
+    await edit(t("time_header", { date: fmtDate(date), hour: hourLabel, list: formatPeopleTimes(subset) }), {
       inline_keyboard: rows,
     });
     return;
@@ -1034,7 +1106,7 @@ async function handleCallback(env, data, cq) {
     });
     const rows = btnRows(buttons, 2);
     rows.push([{ text: t("btn_back_topics"), callback_data: "ms:topic_menu" }]);
-    await edit(t("topic_header", { topic, list: formatPeopleTimes(subset) }), { inline_keyboard: rows });
+    await edit(t("topic_header", { topic: escHtml(topic), list: formatPeopleTimes(subset) }), { inline_keyboard: rows });
     return;
   }
 
@@ -1084,7 +1156,7 @@ async function handleCallback(env, data, cq) {
     const hourLabel = String(hour).padStart(2, "0");
     const namesAt = eventsAtHour(meet, sched, date, hour);
     if (!namesAt.length) {
-      await edit(t("event_empty_hour", { date, hour: hourLabel }), {
+      await edit(t("event_empty_hour", { date: fmtDate(date), hour: hourLabel }), {
         inline_keyboard: [[{ text: t("btn_back_hours"), callback_data: `ms:ev:td:${date}` }]],
       });
       return;
@@ -1096,7 +1168,7 @@ async function handleCallback(env, data, cq) {
       .slice(0, 40);
     const rows = eventKeyboard(items, `ms:ev:td:${date}`).inline_keyboard;
     // replace last backs: eventKeyboard already adds back + menu; first back goes to hours via our backCb
-    await edit(t("event_time_list_header", { date, hour: hourLabel }), { inline_keyboard: rows });
+    await edit(t("event_time_list_header", { date: fmtDate(date), hour: hourLabel }), { inline_keyboard: rows });
     return;
   }
 
@@ -1117,7 +1189,8 @@ async function handleCallback(env, data, cq) {
     const rows = btnRows(buttons, 2);
     rows.push([{ text: t("btn_back_event_menu"), callback_data: "ms:event_menu" }]);
     rows.push([{ text: t("btn_back_menu"), callback_data: "back:home" }]);
-    await edit(t("event_header", { event: ev, list: formatPeopleTimes(subset) }), {
+    const evLink = eventLinkMap(sched).get(ev) || (subset.find((r) => r.u)?.u ?? "");
+    await edit(t("event_header", { event: fmtEvent(ev, evLink), list: formatPeopleTimes(subset) }), {
       inline_keyboard: rows,
     });
     return;
@@ -1146,7 +1219,7 @@ async function handleCallback(env, data, cq) {
     ];
     const rows = btnRows(buttons, 4);
     rows.push([{ text: t("btn_back_dates"), callback_data: "schedule:menu" }]);
-    await edit(t("schedule_pick_time", { date }), { inline_keyboard: rows });
+    await edit(t("schedule_pick_time", { date: fmtDate(date) }), { inline_keyboard: rows });
     return;
   }
 
@@ -1154,7 +1227,7 @@ async function handleCallback(env, data, cq) {
     const date = raw.slice("schedule:full:".length);
     const events = schedOnDate(sched, date);
     if (!events.length) {
-      await edit(t("schedule_empty_day", { date }), {
+      await edit(t("schedule_empty_day", { date: fmtDate(date) }), {
         inline_keyboard: [[{ text: t("btn_back"), callback_data: `schedule:date:${date}` }]],
       });
       return;
@@ -1165,7 +1238,7 @@ async function handleCallback(env, data, cq) {
     }));
     const rows = btnRows(buttons, 1);
     rows.push([{ text: t("btn_back_time"), callback_data: `schedule:date:${date}` }]);
-    await edit(t("schedule_day_header", { date, list: formatScheduleEvents(events) }), {
+    await edit(t("schedule_day_header", { date: fmtDate(date), list: formatScheduleEvents(events) }), {
       inline_keyboard: rows,
     });
     return;
@@ -1178,7 +1251,7 @@ async function handleCallback(env, data, cq) {
     const hourLabel = String(hour).padStart(2, "0");
     const events = schedAtHour(sched, date, hour);
     if (!events.length) {
-      await edit(t("schedule_empty_hour", { date, hour: hourLabel }), {
+      await edit(t("schedule_empty_hour", { date: fmtDate(date), hour: hourLabel }), {
         inline_keyboard: [[{ text: t("btn_back"), callback_data: `schedule:date:${date}` }]],
       });
       return;
@@ -1190,7 +1263,7 @@ async function handleCallback(env, data, cq) {
     const rows = btnRows(buttons, 1);
     rows.push([{ text: t("btn_back_time"), callback_data: `schedule:date:${date}` }]);
     await edit(
-      t("schedule_hour_header", { date, hour: hourLabel, list: formatScheduleEvents(events) }),
+      t("schedule_hour_header", { date: fmtDate(date), hour: hourLabel, list: formatScheduleEvents(events) }),
       { inline_keyboard: rows }
     );
     return;
