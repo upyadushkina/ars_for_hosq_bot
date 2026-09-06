@@ -113,7 +113,10 @@ export const T = {
 
   // —— списки слотов / расписание ——
   people_times_person: "👤 {name}\n{slots}",
-  people_times_slot: "{date} {start}–{finish}\n📍 {where}\n ✦ {event}",
+  people_times_slot: "✦ {event}\n{date} {start}–{finish}\n📍 {where}",
+  people_times_slot_noloc: "✦ {event}\n{date} {start}–{finish}",
+  people_times_compact_line: "👤 {name} — {event} · {date} {start}–{finish}",
+  people_times_compact_line_where: "👤 {name} — {event} · {date} {start}–{finish} · {where}",
   schedule_list_item: "{name}\n{start}–{finish}",
   schedule_list_where: "\n📍 {where}",
   schedule_card_name: "{value}",
