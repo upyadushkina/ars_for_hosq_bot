@@ -348,6 +348,20 @@ function uniqueSorted(arr) {
   return [...new Set(arr.filter(Boolean))].sort((a, b) => a.localeCompare(b));
 }
 
+const TG_TEXT_MAX = 3800;
+const LOC_PAGE_SIZE = 28;
+
+function clipTg(text, max = 4096) {
+  const s = String(text || "");
+  if (s.length <= max) return s;
+  return s.slice(0, max - 1) + "…";
+}
+
+/** Rows that actually have a person at a place (skip empty shells). */
+function meetActive(meet) {
+  return meet.filter((r) => clean(r.w) && clean(r.n));
+}
+
 /** "Ars Electronica Center, Level 3, Sky Loft" → parent + room */
 function splitWhere(w) {
   const s = clean(w);
@@ -356,12 +370,11 @@ function splitWhere(w) {
   return { parent: s.slice(0, i).trim(), sub: s.slice(i + 1).trim() };
 }
 
-/** parent → Set of full "Where to Meet" strings */
+/** parent → Set of full "Where to Meet" strings (only active rows) */
 function locationByParent(meet) {
   const byParent = new Map();
-  for (const r of meet) {
+  for (const r of meetActive(meet)) {
     const w = clean(r.w);
-    if (!w) continue;
     const { parent } = splitWhere(w);
     if (!byParent.has(parent)) byParent.set(parent, new Set());
     byParent.get(parent).add(w);
@@ -373,7 +386,7 @@ function locationParents(meet) {
   return [...locationByParent(meet).keys()].sort((a, b) => a.localeCompare(b));
 }
 
-/** Unique room labels under a parent (text after first comma). null = no submenu needed. */
+/** Unique room labels under a parent. null = no submenu needed. */
 function locationSubs(byParent, parent) {
   const wheres = [...(byParent.get(parent) || [])];
   if (wheres.length <= 1) return null;
@@ -381,21 +394,51 @@ function locationSubs(byParent, parent) {
 }
 
 function meetAtParent(meet, parent) {
-  return meet.filter((r) => {
+  return meetActive(meet).filter((r) => {
     const w = clean(r.w);
     return w === parent || w.startsWith(parent + ",");
   });
 }
 
 function meetAtSub(meet, parent, sub) {
-  if (!sub) return meet.filter((r) => clean(r.w) === parent);
+  const active = meetActive(meet);
+  if (!sub) return active.filter((r) => clean(r.w) === parent);
   const full = `${parent}, ${sub}`;
-  return meet.filter((r) => clean(r.w) === full);
+  return active.filter((r) => clean(r.w) === full);
 }
 
-function showLocPeople(edit, people, subset, locLabel, backCb) {
-  const names = uniqueSorted(subset.map((r) => r.n));
-  const buttons = names.slice(0, 40).map((nm) => {
+function locListText(subset, namesOnPage) {
+  const pageRows = subset.filter((r) => namesOnPage.includes(clean(r.n)));
+  let list = formatPeopleTimes(pageRows);
+  if (list.length <= TG_TEXT_MAX) return list;
+  return t("loc_people_compact", {
+    n: namesOnPage.length,
+    list: namesOnPage.map((nm) => `👤 ${nm}`).join("\n"),
+  });
+}
+
+function showLocPeople(edit, people, subset, locLabel, backCb, pagePrefix, page = 0) {
+  const names = uniqueSorted(subset.map((r) => r.n).filter(Boolean));
+  if (!names.length) {
+    return edit(t("loc_header", { loc: locLabel, list: t("nothing_found") }), {
+      inline_keyboard: [[{ text: t("btn_back_locations"), callback_data: backCb }]],
+    });
+  }
+  const pages = Math.max(1, Math.ceil(names.length / LOC_PAGE_SIZE));
+  const p = Math.min(Math.max(0, page | 0), pages - 1);
+  const slice = names.slice(p * LOC_PAGE_SIZE, (p + 1) * LOC_PAGE_SIZE);
+  const list = locListText(subset, slice);
+  const header =
+    pages > 1
+      ? t("loc_header_paged", {
+          loc: locLabel,
+          page: p + 1,
+          pages,
+          list,
+        })
+      : t("loc_header", { loc: locLabel, list });
+
+  const buttons = slice.map((nm) => {
     const idx = findPersonByName(people, nm);
     return {
       text: nm.slice(0, 30) || t("dash"),
@@ -403,10 +446,19 @@ function showLocPeople(edit, people, subset, locLabel, backCb) {
     };
   });
   const rows = btnRows(buttons, 2);
+  if (pages > 1) {
+    const nav = [];
+    if (p > 0) {
+      nav.push({ text: t("btn_loc_prev"), callback_data: `${pagePrefix}:${p - 1}` });
+    }
+    nav.push({ text: t("btn_loc_page", { page: p + 1, pages }), callback_data: `${pagePrefix}:${p}` });
+    if (p < pages - 1) {
+      nav.push({ text: t("btn_loc_next"), callback_data: `${pagePrefix}:${p + 1}` });
+    }
+    rows.push(nav);
+  }
   rows.push([{ text: t("btn_back_locations"), callback_data: backCb }]);
-  return edit(t("loc_header", { loc: locLabel, list: formatPeopleTimes(subset) }), {
-    inline_keyboard: rows,
-  });
+  return edit(header, { inline_keyboard: rows });
 }
 
 /** @type {Map<string, { mode: string, at: number }>} */
@@ -585,20 +637,26 @@ async function tg(env, method, body) {
 async function sendMessage(env, chatId, text, reply_markup) {
   return tg(env, "sendMessage", {
     chat_id: chatId,
-    text,
+    text: clipTg(text),
     reply_markup,
     disable_web_page_preview: true,
   });
 }
 
 async function editMessage(env, chatId, messageId, text, reply_markup) {
-  return tg(env, "editMessageText", {
+  const payload = {
     chat_id: chatId,
     message_id: messageId,
-    text,
+    text: clipTg(text),
     reply_markup,
     disable_web_page_preview: true,
-  });
+  };
+  const res = await tg(env, "editMessageText", payload);
+  // If edit fails (e.g. oversized markup edge cases), fall back to a new message
+  if (res && res.ok === false) {
+    return sendMessage(env, chatId, text, reply_markup);
+  }
+  return res;
 }
 
 async function answerCb(env, id) {
@@ -800,14 +858,15 @@ async function handleCallback(env, data, cq) {
     if (!subs) {
       const wheres = [...(byParent.get(parent) || [])];
       const only = wheres[0] || parent;
-      await showLocPeople(edit, people, meet.filter((r) => clean(r.w) === only), only, "ms:loc_menu");
+      const subset = meet.filter((r) => clean(r.w) === only && clean(r.n));
+      await showLocPeople(edit, people, subset, only, "ms:loc_menu", `ms:l1:${pi}`, 0);
       return;
     }
     const buttons = [
-      { text: t("btn_loc_all"), callback_data: `ms:la:${pi}` },
+      { text: t("btn_loc_all"), callback_data: `ms:la:${pi}:0` },
       ...subs.map((sub, si) => ({
         text: (sub || t("btn_loc_unspecified")).slice(0, 40),
-        callback_data: `ms:ls:${pi}:${si}`,
+        callback_data: `ms:ls:${pi}:${si}:0`,
       })),
     ];
     const rows = btnRows(buttons, 1);
@@ -816,15 +875,44 @@ async function handleCallback(env, data, cq) {
     return;
   }
 
-  if (raw.startsWith("ms:la:")) {
+  // single-venue people list with pages: ms:l1:{pi}:{page}
+  if (raw.startsWith("ms:l1:")) {
+    const parts = raw.split(":");
+    const pi = +parts[2];
+    const page = parts[3] != null ? +parts[3] : 0;
     const parents = locationParents(meet);
-    const pi = +raw.slice(6);
     const parent = parents[pi];
     if (!parent) {
       await edit(t("loc_error"));
       return;
     }
-    await showLocPeople(edit, people, meetAtParent(meet, parent), parent, `ms:lp:${pi}`);
+    const byParent = locationByParent(meet);
+    const wheres = [...(byParent.get(parent) || [])];
+    const only = wheres[0] || parent;
+    const subset = meet.filter((r) => clean(r.w) === only && clean(r.n));
+    await showLocPeople(edit, people, subset, only, "ms:loc_menu", `ms:l1:${pi}`, page);
+    return;
+  }
+
+  if (raw.startsWith("ms:la:")) {
+    const parts = raw.slice(6).split(":");
+    const pi = +parts[0];
+    const page = parts[1] != null ? +parts[1] : 0;
+    const parents = locationParents(meet);
+    const parent = parents[pi];
+    if (!parent) {
+      await edit(t("loc_error"));
+      return;
+    }
+    await showLocPeople(
+      edit,
+      people,
+      meetAtParent(meet, parent),
+      parent,
+      `ms:lp:${pi}`,
+      `ms:la:${pi}`,
+      page
+    );
     return;
   }
 
@@ -832,6 +920,7 @@ async function handleCallback(env, data, cq) {
     const parts = raw.split(":");
     const pi = +parts[2];
     const si = +parts[3];
+    const page = parts[4] != null ? +parts[4] : 0;
     const parents = locationParents(meet);
     const parent = parents[pi];
     if (!parent) {
@@ -846,7 +935,15 @@ async function handleCallback(env, data, cq) {
       return;
     }
     const label = sub ? `${parent}, ${sub}` : parent;
-    await showLocPeople(edit, people, meetAtSub(meet, parent, sub), label, `ms:lp:${pi}`);
+    await showLocPeople(
+      edit,
+      people,
+      meetAtSub(meet, parent, sub),
+      label,
+      `ms:lp:${pi}`,
+      `ms:ls:${pi}:${si}`,
+      page
+    );
     return;
   }
 
