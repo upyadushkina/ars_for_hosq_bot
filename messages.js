@@ -63,6 +63,7 @@ export const T = {
 
   time_pick_date: "выбери дату:",
   time_pick_hour: "выбери время:",
+  time_empty_hours: "на {date} нет доступных слотов.",
   time_header: "{date} {hour}:00\n\n{list}",
 
   topic_menu_title: "выбери тему:",
@@ -115,8 +116,6 @@ export const T = {
   people_times_person: "👤 {name}\n{slots}",
   people_times_slot: "✦ {event}\n{date} {start}–{finish}\n📍 {where}",
   people_times_slot_noloc: "✦ {event}\n{date} {start}–{finish}",
-  people_times_compact_line: "👤 {name} — {event} · {date} {start}–{finish}",
-  people_times_compact_line_where: "👤 {name} — {event} · {date} {start}–{finish} · {where}",
   schedule_list_item: "{name}\n{date} {start}–{finish}",
   schedule_list_where: "\n📍 {where}",
   schedule_card_name: "{value}",
