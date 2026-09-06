@@ -348,6 +348,67 @@ function uniqueSorted(arr) {
   return [...new Set(arr.filter(Boolean))].sort((a, b) => a.localeCompare(b));
 }
 
+/** "Ars Electronica Center, Level 3, Sky Loft" → parent + room */
+function splitWhere(w) {
+  const s = clean(w);
+  const i = s.indexOf(",");
+  if (i < 0) return { parent: s, sub: "" };
+  return { parent: s.slice(0, i).trim(), sub: s.slice(i + 1).trim() };
+}
+
+/** parent → Set of full "Where to Meet" strings */
+function locationByParent(meet) {
+  const byParent = new Map();
+  for (const r of meet) {
+    const w = clean(r.w);
+    if (!w) continue;
+    const { parent } = splitWhere(w);
+    if (!byParent.has(parent)) byParent.set(parent, new Set());
+    byParent.get(parent).add(w);
+  }
+  return byParent;
+}
+
+function locationParents(meet) {
+  return [...locationByParent(meet).keys()].sort((a, b) => a.localeCompare(b));
+}
+
+/** Unique room labels under a parent (text after first comma). null = no submenu needed. */
+function locationSubs(byParent, parent) {
+  const wheres = [...(byParent.get(parent) || [])];
+  if (wheres.length <= 1) return null;
+  return uniqueSorted(wheres.map((w) => splitWhere(w).sub));
+}
+
+function meetAtParent(meet, parent) {
+  return meet.filter((r) => {
+    const w = clean(r.w);
+    return w === parent || w.startsWith(parent + ",");
+  });
+}
+
+function meetAtSub(meet, parent, sub) {
+  if (!sub) return meet.filter((r) => clean(r.w) === parent);
+  const full = `${parent}, ${sub}`;
+  return meet.filter((r) => clean(r.w) === full);
+}
+
+function showLocPeople(edit, people, subset, locLabel, backCb) {
+  const names = uniqueSorted(subset.map((r) => r.n));
+  const buttons = names.slice(0, 40).map((nm) => {
+    const idx = findPersonByName(people, nm);
+    return {
+      text: nm.slice(0, 30) || t("dash"),
+      callback_data: idx >= 0 ? `np:${idx}` : "back:home",
+    };
+  });
+  const rows = btnRows(buttons, 2);
+  rows.push([{ text: t("btn_back_locations"), callback_data: backCb }]);
+  return edit(t("loc_header", { loc: locLabel, list: formatPeopleTimes(subset) }), {
+    inline_keyboard: rows,
+  });
+}
+
 /** @type {Map<string, { mode: string, at: number }>} */
 const PENDING = new Map();
 const PENDING_TTL_MS = 15 * 60 * 1000;
@@ -713,12 +774,12 @@ async function handleCallback(env, data, cq) {
     return;
   }
 
-  // ---- meet: location ----
+  // ---- meet: location (venue → room) ----
   if (raw === "ms:loc_menu") {
-    const locs = uniqueSorted(meet.map((r) => r.w));
-    const buttons = locs.map((loc, i) => ({
-      text: loc.slice(0, 30) || t("dash"),
-      callback_data: `ms:l:${i}`,
+    const parents = locationParents(meet);
+    const buttons = parents.map((loc, i) => ({
+      text: loc.slice(0, 40) || t("dash"),
+      callback_data: `ms:lp:${i}`,
     }));
     const rows = btnRows(buttons.slice(0, 60), 1);
     rows.push([{ text: t("btn_back"), callback_data: "back:home" }]);
@@ -726,26 +787,66 @@ async function handleCallback(env, data, cq) {
     return;
   }
 
-  if (raw.startsWith("ms:l:")) {
-    const locs = uniqueSorted(meet.map((r) => r.w));
-    const li = +raw.slice(5);
-    const loc = locs[li];
-    if (!loc) {
+  if (raw.startsWith("ms:lp:")) {
+    const parents = locationParents(meet);
+    const pi = +raw.slice(6);
+    const parent = parents[pi];
+    if (!parent) {
       await edit(t("loc_error"));
       return;
     }
-    const subset = meet.filter((r) => r.w === loc);
-    const names = uniqueSorted(subset.map((r) => r.n));
-    const buttons = names.slice(0, 40).map((nm) => {
-      const idx = findPersonByName(people, nm);
-      return {
-        text: nm.slice(0, 30) || t("dash"),
-        callback_data: idx >= 0 ? `np:${idx}` : "back:home",
-      };
-    });
-    const rows = btnRows(buttons, 2);
+    const byParent = locationByParent(meet);
+    const subs = locationSubs(byParent, parent);
+    if (!subs) {
+      const wheres = [...(byParent.get(parent) || [])];
+      const only = wheres[0] || parent;
+      await showLocPeople(edit, people, meet.filter((r) => clean(r.w) === only), only, "ms:loc_menu");
+      return;
+    }
+    const buttons = [
+      { text: t("btn_loc_all"), callback_data: `ms:la:${pi}` },
+      ...subs.map((sub, si) => ({
+        text: (sub || t("btn_loc_unspecified")).slice(0, 40),
+        callback_data: `ms:ls:${pi}:${si}`,
+      })),
+    ];
+    const rows = btnRows(buttons, 1);
     rows.push([{ text: t("btn_back_locations"), callback_data: "ms:loc_menu" }]);
-    await edit(t("loc_header", { loc, list: formatPeopleTimes(subset) }), { inline_keyboard: rows });
+    await edit(t("loc_pick_room", { loc: parent }), { inline_keyboard: rows });
+    return;
+  }
+
+  if (raw.startsWith("ms:la:")) {
+    const parents = locationParents(meet);
+    const pi = +raw.slice(6);
+    const parent = parents[pi];
+    if (!parent) {
+      await edit(t("loc_error"));
+      return;
+    }
+    await showLocPeople(edit, people, meetAtParent(meet, parent), parent, `ms:lp:${pi}`);
+    return;
+  }
+
+  if (raw.startsWith("ms:ls:")) {
+    const parts = raw.split(":");
+    const pi = +parts[2];
+    const si = +parts[3];
+    const parents = locationParents(meet);
+    const parent = parents[pi];
+    if (!parent) {
+      await edit(t("loc_error"));
+      return;
+    }
+    const byParent = locationByParent(meet);
+    const subs = locationSubs(byParent, parent) || [];
+    const sub = subs[si];
+    if (sub == null) {
+      await edit(t("loc_error"));
+      return;
+    }
+    const label = sub ? `${parent}, ${sub}` : parent;
+    await showLocPeople(edit, people, meetAtSub(meet, parent, sub), label, `ms:lp:${pi}`);
     return;
   }
 
