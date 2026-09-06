@@ -1,17 +1,4 @@
 name = "ars-for-hosq-bot"
-main = "index.js"
+main = "worker.js"
 compatibility_date = "2026-09-01"
 workers_dev = true
-
-[[containers]]
-class_name = "BotContainer"
-image = "Dockerfile"
-max_instances = 2
-
-[[durable_objects.bindings]]
-name = "BOT_CONTAINER"
-class_name = "BotContainer"
-
-[[migrations]]
-tag = "v1"
-new_sqlite_classes = ["BotContainer"]
