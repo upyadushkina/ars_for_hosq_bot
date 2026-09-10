@@ -338,11 +338,76 @@ function splitName(name) {
   return { first: parts[0] || "", last: parts.length > 1 ? parts[parts.length - 1] : "" };
 }
 
-function personCard(p) {
+/** "Project – Foo; Concert – Bar" → ["Foo", "Bar"] */
+function parseFestivalRoleEvents(fr) {
+  const out = [];
+  for (const chunk of clean(fr).split(";")) {
+    const part = clean(chunk);
+    if (!part) continue;
+    const bits = part.split(/\s+[–—-]\s+/);
+    const title = clean(bits.length > 1 ? bits.slice(1).join(" – ") : part);
+    if (title) out.push(title);
+  }
+  return out;
+}
+
+function resolveEventLink(name, linkMap) {
+  const n = clean(name);
+  if (!n || !linkMap?.size) return "";
+  if (linkMap.has(n)) return linkMap.get(n);
+  const lower = n.toLowerCase();
+  for (const [k, v] of linkMap) {
+    if (k.toLowerCase() === lower) return v;
+  }
+  let best = "";
+  let bestLen = 0;
+  for (const [k, v] of linkMap) {
+    const kk = k.toLowerCase();
+    if (kk.includes(lower) || lower.includes(kk)) {
+      if (k.length > bestLen) {
+        best = v;
+        bestLen = k.length;
+      }
+    }
+  }
+  return best;
+}
+
+/** Unique event titles for a person: meet slots first, then Festival Role. */
+function personEventTitles(p, meet) {
+  const titles = [];
+  const seen = new Set();
+  const add = (name) => {
+    const n = clean(name);
+    if (!n) return;
+    const key = n.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    titles.push(n);
+  };
+  const pname = clean(p.n);
+  for (const r of meet) {
+    if (clean(r.n) === pname) add(r.e);
+  }
+  for (const title of parseFestivalRoleEvents(p.fr)) add(title);
+  return titles;
+}
+
+function formatPersonEvents(p, meet, linkMap) {
+  const titles = personEventTitles(p, meet);
+  if (!titles.length) return "";
+  return titles
+    .map((name) => t("person_event_item", { event: fmtEvent(name, resolveEventLink(name, linkMap)) }))
+    .join("\n");
+}
+
+function personCard(p, meet = [], sched = []) {
+  const linkMap = eventLinkMap(sched);
   const blocks = [];
   if (p.n) blocks.push(escHtml(p.n));
   if (p.r) blocks.push(escHtml(p.r));
-  if (p.fr) blocks.push(t("person_festival_role", { value: escHtml(p.fr) }));
+  const events = formatPersonEvents(p, meet, linkMap);
+  if (events) blocks.push(events);
   if (p.b) blocks.push(t("person_bio", { value: escHtml(p.b) }));
   if (p.t) blocks.push(t("person_tip", { value: escHtml(p.t) }));
   const inst = [p.i, p.l].filter(Boolean).map(escHtml);
@@ -776,16 +841,29 @@ async function answerCb(env, id) {
   } catch (_) {}
 }
 
-async function sendPerson(env, chatId, p) {
-  const caption = personCard(p);
+async function sendPerson(env, chatId, p, meet = [], sched = []) {
+  const caption = personCard(p, meet, sched);
   if (p.ph) {
-    const photo = await tg(env, "sendPhoto", {
-      chat_id: chatId,
-      photo: p.ph,
-      caption: caption.slice(0, 1024),
-      parse_mode: "HTML",
-    });
-    if (photo && photo.ok) return;
+    if (caption.length <= 1024) {
+      const photo = await tg(env, "sendPhoto", {
+        chat_id: chatId,
+        photo: p.ph,
+        caption,
+        parse_mode: "HTML",
+      });
+      if (photo && photo.ok) return;
+    } else {
+      const photo = await tg(env, "sendPhoto", {
+        chat_id: chatId,
+        photo: p.ph,
+        caption: escHtml(p.n || "").slice(0, 1024),
+        parse_mode: "HTML",
+      });
+      if (photo && photo.ok) {
+        await sendMessage(env, chatId, caption);
+        return;
+      }
+    }
   }
   await sendMessage(env, chatId, caption);
 }
@@ -937,7 +1015,7 @@ async function handleCallback(env, data, cq) {
       await edit(t("person_not_found"));
       return;
     }
-    await sendPerson(env, chatId, p);
+    await sendPerson(env, chatId, p, meet, sched);
     await sendMessage(env, chatId, t("what_next"), {
       inline_keyboard: [[{ text: t("btn_back_menu"), callback_data: "back:home" }]],
     });
