@@ -108,6 +108,7 @@ export const T = {
 
   // —— карточка человека ——
   person_festival_role: "{value}",
+  person_event_item: "✦ {event}",
   person_bio: "bio: {value}",
   person_tip: "✦ tip: {value}",
   person_contact: "📱 {value}",
