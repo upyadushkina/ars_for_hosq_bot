@@ -8,13 +8,18 @@
 
 export const T = {
   // —— кнопки главного меню ——
-  btn_search_name: "🔎 поиск по имени",
-  btn_by_location: "📍 по локации",
-  btn_by_time: "🕒 по времени",
-  btn_by_topic: "по теме",
-  btn_by_event: "по ивенту",
-  btn_schedule: "✦ моё расписание ✦",
-  btn_settings: "⚙️ настройки",
+  btn_search_name: "▸ поиск по имени",
+  btn_by_location: "▸ по локации",
+  btn_by_time: "▸ по времени",
+  btn_by_topic: "▸ по теме",
+  btn_by_event: "▸ по ивенту",
+  btn_schedule: "(ex.) моё расписание",
+  btn_networking: "✦ networking '26",
+  btn_nw_hashtags: "hashtags",
+  btn_nw_name: "name",
+  btn_nw_all: "show all",
+  btn_back_networking: "← networking '26",
+  btn_settings: "▸ настройки",
   btn_restart: "restart",
 
   // —— общие кнопки ——
@@ -33,16 +38,16 @@ export const T = {
   btn_back_events: "← назад к ивентам",
   btn_back_time: "← назад к времени",
   btn_full_day: "весь день",
-  btn_name_alpha: "🔤 имена в алфавитном порядке",
+  btn_name_alpha: "▸ имена в алфавитном порядке",
   btn_name_typing: "введите имя",
-  btn_refresh_data: "🔄 обновить данные",
-  btn_event_by_name: "🔎 поиск по названию",
-  btn_event_by_time: "🕒 поиск по дате и времени",
+  btn_refresh_data: "↺ обновить данные",
+  btn_event_by_name: "▸ поиск по названию",
+  btn_event_by_time: "▸ поиск по дате и времени",
   btn_back_event_menu: "← поиск ивентов",
 
   // —— экраны ——
   main_menu: "✦ меню ✦",
-  restarted: "🔄 бот перезапущен!\n\n✦ меню ✦",
+  restarted: "↺ бот перезапущен!\n\n✦ меню ✦",
 
   name_menu_title: "как искать по имени?",
   name_typing_prompt: "введи имя/фамилию для поиска (обычным сообщением):",
@@ -90,18 +95,24 @@ export const T = {
   schedule_event_not_found: "не удалось найти событие.",
   schedule_people_header: "люди на этом событии:",
 
+  nw_menu_title: "✦ networking '26 — как искать?",
+  nw_pick_tag: "выбери hashtag:",
+  nw_tag_header: "#{tag}",
+  nw_all_header: "все контакты networking '26:",
+  nw_no_tags: "в таблице пока нет hashtags.",
+
   nothing_found: "ничего не найдено.",
   unknown_command: "неизвестная команда. нажми /start",
   generic_error: "произошла ошибка. попробуйте /start ещё раз.",
 
   // —— настройки / кэш ——
   settings_title:
-    "⚙️ настройки\n\nисточник: Google Sheet: https://docs.google.com/spreadsheets/d/1X6oouceCLD3pY289WtT-gPeU_kxeq6mpilbLNehSGCw/edit?usp=sharing\nКэш: {cacheAge}\nTTL: {ttlMin} мин\n\nлюди: {nPeople}\nивенты: {nMeet}\nрасписание: {nSched}",
-  settings_refreshing: "⏳ Обновляю данные из Google Sheet…",
+    "✦ настройки\n\nисточник: Google Sheet: https://docs.google.com/spreadsheets/d/1b04rsWAnZ_0dCevkdDtaCCV-JcO4clMiavKLGS8fZEA/edit?usp=sharing\nКэш: {cacheAge}\nTTL: {ttlMin} мин\n\nлюди: {nPeople}\nивенты: {nMeet}\nрасписание: {nSched}\nnetworking: {nNet}",
+  settings_refreshing: "… обновляю данные из Google Sheet",
   settings_refreshed:
-    "✅ данные обновлены\n\nКэш: только что\npeople: {nPeople}\nmeet: {nMeet}\nschedule: {nSched}",
+    "✓ данные обновлены\n\nКэш: только что\npeople: {nPeople}\nmeet: {nMeet}\nschedule: {nSched}\nnetworking: {nNet}",
   settings_refresh_failed:
-    "❌ не удалось обновить:\n{error}\n\nпроверь, что Sheet доступен по ссылке «Anyone with the link».",
+    "✕ не удалось обновить:\n{error}\n\nпроверь, что Sheet доступен по ссылке «Anyone with the link».",
   cache_empty: "кэш пуст",
   cache_sec_ago: "{n} сек назад",
   cache_min_ago: "{n} мин назад",
@@ -111,23 +122,26 @@ export const T = {
   person_event_item: "✦ {event}",
   person_bio: "bio: {value}",
   person_tip: "✦ tip: {value}",
-  person_contact: "📱 {value}",
+  person_comment: "comment: {value}",
+  person_tags: "{value}",
+  person_socials: "{value}",
+  person_contact: "· {value}",
 
   // —— списки слотов / расписание ——
-  people_times_person: "👤 {name}\n{slots}",
-  people_times_slot: "✦ {event}\n{date} {start}–{finish}\n📍 {where}",
+  people_times_person: "✦ {name}\n{slots}",
+  people_times_slot: "✦ {event}\n{date} {start}–{finish}\n▸ {where}",
   people_times_slot_noloc: "✦ {event}\n{date} {start}–{finish}",
   schedule_list_item: "{name}\n{date} {start}–{finish}",
-  schedule_list_where: "\n📍 {where}",
+  schedule_list_where: "\n▸ {where}",
   schedule_card_name: "{value}",
   schedule_card_date: "{value}",
-  schedule_card_time: "🕒 {start}–{finish}",
-  schedule_card_where: "📍 {value}",
+  schedule_card_time: "{start}–{finish}",
+  schedule_card_where: "▸ {value}",
   schedule_card_type: "{value}",
   schedule_card_desc: "{value}",
-  schedule_card_people: "👥 {value}",
+  schedule_card_people: "· {value}",
   schedule_card_reg: "{value}",
-  schedule_card_link: "🔗 {value}",
+  schedule_card_link: "· {value}",
 
   dash: "—",
 };
