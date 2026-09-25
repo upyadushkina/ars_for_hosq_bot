@@ -457,13 +457,13 @@ async function loadData(env, { force = false } = {}) {
 function homeKeyboard() {
   return {
     inline_keyboard: [
+      [{ text: t("btn_networking"), callback_data: "nw:menu" }],
       [{ text: t("btn_search_name"), callback_data: "name:menu" }],
       [{ text: t("btn_by_location"), callback_data: "ms:loc_menu" }],
       [{ text: t("btn_by_time"), callback_data: "ms:time_menu" }],
       [{ text: t("btn_by_topic"), callback_data: "ms:topic_menu" }],
       [{ text: t("btn_by_event"), callback_data: "ms:event_menu" }],
       [{ text: t("btn_schedule"), callback_data: "schedule:menu" }],
-      [{ text: t("btn_networking"), callback_data: "nw:menu" }],
       [{ text: t("btn_settings"), callback_data: "settings:menu" }],
       [{ text: t("btn_restart"), callback_data: "restart:bot" }],
     ],
@@ -1289,7 +1289,7 @@ async function handleCallback(env, data, cq) {
       return;
     }
     const buttons = tags.map((tag, i) => ({
-      text: `#${tag}`.slice(0, 40),
+      text: tag.slice(0, 40),
       callback_data: `nw:t:${i}:0`,
     }));
     const rows = btnRows(buttons, 2);
@@ -1388,11 +1388,19 @@ async function handleCallback(env, data, cq) {
       return;
     }
     await sendPerson(env, chatId, mergeNetPerson(np, people), meet, sched);
-    await sendMessage(env, chatId, t("what_next"), {
-      inline_keyboard: [
-        [{ text: t("btn_back_networking"), callback_data: "nw:menu" }],
-        [{ text: t("btn_back_menu"), callback_data: "back:home" }],
-      ],
+    const allTags = uniqueHashtags(net);
+    const tagButtons = (np.tags || [])
+      .map((tag) => {
+        const ti = allTags.findIndex((x) => x.toLowerCase() === tag.toLowerCase());
+        if (ti < 0) return null;
+        return { text: tag.slice(0, 40), callback_data: `nw:t:${ti}:0` };
+      })
+      .filter(Boolean);
+    const rows = btnRows(tagButtons, 2);
+    rows.push([{ text: t("btn_back_networking"), callback_data: "nw:menu" }]);
+    rows.push([{ text: t("btn_back_menu"), callback_data: "back:home" }]);
+    await sendMessage(env, chatId, tagButtons.length ? t("nw_person_tags") : t("what_next"), {
+      inline_keyboard: rows,
     });
     return;
   }
