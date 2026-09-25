@@ -7,14 +7,25 @@
  *   WEBHOOK_SECRET          (optional; or TELEGRAM_WEBHOOK_SECRET)
  *   SHEET_ID                (optional override)
  *
- * Data: Google Sheet tabs `people` / `meet` / `schedule`
+ * Data: Google Sheet tabs `people '26` / `meeting slots '26` / `schedule '26` / `networking '26`
  * Texts: messages.js (edit manually)
  * Cache: in-memory, ~10 minutes (force refresh in Настройки)
  */
 
 import { t } from "./messages.js";
 
-const DEFAULT_SHEET_ID = "1X6oouceCLD3pY289WtT-gPeU_kxeq6mpilbLNehSGCw";
+const DEFAULT_SHEET_ID = "1b04rsWAnZ_0dCevkdDtaCCV-JcO4clMiavKLGS8fZEA";
+const SHEET_TABS = {
+  people: ["people '26", "people"],
+  meet: ["meeting slots '26", "meet"],
+  sched: ["schedule '26", "shedule '26", "schedule"],
+  net: ["networking '26", "networking"],
+};
+const NET_SKIP_NAMES = new Set([
+  "haven't talked",
+  "had a meeting",
+  "talked during ars",
+]);
 const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes (within 5–15)
 const FESTIVAL_DATES = ["08.09", "09.09", "10.09", "11.09", "12.09", "13.09"];
 const ALPHABET =
@@ -83,15 +94,69 @@ function normHeader(h) {
 }
 
 function pickCol(headers, predicates) {
-  for (let i = 0; i < headers.length; i++) {
-    const h = normHeader(headers[i]);
-    for (const pred of predicates) {
-      if (typeof pred === "string") {
-        if (h === pred || h.startsWith(pred)) return i;
-      } else if (pred(h)) return i;
+  for (let pass = 0; pass < 2; pass++) {
+    for (let i = 0; i < headers.length; i++) {
+      const h = normHeader(headers[i]);
+      for (const pred of predicates) {
+        const hit =
+          typeof pred === "string"
+            ? pass === 0
+              ? h === pred
+              : h.startsWith(pred)
+            : pred(h);
+        if (hit) return i;
+      }
     }
   }
   return -1;
+}
+
+function headerHas(rows, needles) {
+  if (!rows.length) return false;
+  const h = rows[0].map(normHeader);
+  return needles.every((n) => h.some((x) => x === n || x.startsWith(n)));
+}
+
+/** Google Drive share links → direct image URL Telegram can fetch. */
+function driveFileId(url) {
+  const s = clean(url);
+  if (!s) return "";
+  const m =
+    s.match(/\/file\/d\/([a-zA-Z0-9_-]+)/) ||
+    s.match(/[?&]id=([a-zA-Z0-9_-]+)/) ||
+    s.match(/\/d\/([a-zA-Z0-9_-]+)/);
+  return m ? m[1] : "";
+}
+
+function firstHttpUrl(raw) {
+  const parts = clean(raw)
+    .split(/[,;\n]+/)
+    .map((x) => x.trim())
+    .filter(Boolean);
+  return parts.find((x) => /^https?:\/\//i.test(x)) || "";
+}
+
+function normalizePhotoUrl(url) {
+  const first = firstHttpUrl(url);
+  if (!first || first === "—" || first === "-") return "";
+  if (/drive\.google\.com|docs\.google\.com/i.test(first)) {
+    const id = driveFileId(first);
+    if (id) return `https://drive.google.com/uc?export=view&id=${id}`;
+  }
+  return first;
+}
+
+function photoUrlCandidates(url) {
+  const first = firstHttpUrl(url);
+  const id = driveFileId(first);
+  if (id) {
+    return [
+      `https://drive.google.com/uc?export=view&id=${id}`,
+      `https://lh3.googleusercontent.com/d/${id}`,
+    ];
+  }
+  const n = normalizePhotoUrl(url);
+  return n ? [n] : [];
 }
 
 function parseCsv(text) {
@@ -144,6 +209,20 @@ async function fetchSheetCsv(id, sheetName) {
   return res.text();
 }
 
+async function fetchFirstSheet(id, names, validate) {
+  let lastErr = null;
+  for (const name of names) {
+    try {
+      const rows = parseCsv(await fetchSheetCsv(id, name));
+      if (validate && !validate(rows)) continue;
+      if (rows.length) return rows;
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr || new Error(`no usable sheet among: ${names.join(", ")}`);
+}
+
 function mapPeople(rows) {
   if (!rows.length) return [];
   const h = rows[0];
@@ -151,23 +230,30 @@ function mapPeople(rows) {
   const iPhoto = pickCol(h, ["photo"]);
   const iContact = pickCol(h, ["contact"]);
   const iRole = pickCol(h, ["role"]);
-  const iInst = pickCol(h, ["institution", "country"]);
-  const iFr = pickCol(h, ["festival role", "festival"]);
+  const iInst = pickCol(h, [(x) => x === "institution"]);
+  const iCountry = pickCol(h, ["country"]);
+  const iInstDesc = pickCol(h, ["institution description"]);
+  const iFr = pickCol(h, ["festival role"]);
   const iBio = pickCol(h, ["bio"]);
   const iTip = pickCol(h, ["conversation tip", "tip"]);
-  const iLink = pickCol(h, ["institution link", "link"]);
+  const iLink = pickCol(h, ["institution link"]);
   if (iName < 0) throw new Error("people: no Name column");
   const out = [];
   for (let r = 1; r < rows.length; r++) {
     const row = rows[r];
     const n = clean(row[iName]);
     if (!n) continue;
+    const country = iCountry >= 0 ? clean(row[iCountry]) : "";
+    const inst = iInst >= 0 ? clean(row[iInst]) : "";
     out.push({
       n,
-      ph: iPhoto >= 0 ? clean(row[iPhoto]) : "",
+      ph: iPhoto >= 0 ? normalizePhotoUrl(row[iPhoto]) : "",
+      phRaw: iPhoto >= 0 ? clean(row[iPhoto]) : "",
       c: iContact >= 0 ? clean(row[iContact]) : "",
       r: iRole >= 0 ? clean(row[iRole]) : "",
-      i: iInst >= 0 ? clean(row[iInst]) : "",
+      i: inst || country,
+      country,
+      instDesc: iInstDesc >= 0 ? clean(row[iInstDesc]) : "",
       fr: iFr >= 0 ? clean(row[iFr]) : "",
       b: iBio >= 0 ? clean(row[iBio]).slice(0, 500) : "",
       t: iTip >= 0 ? clean(row[iTip]) : "",
@@ -175,6 +261,85 @@ function mapPeople(rows) {
     });
   }
   return out;
+}
+
+function parseHashtags(raw) {
+  return uniqueSorted(
+    clean(raw)
+      .split(/[,;\n|/]+/)
+      .map((x) => x.replace(/^#+/, "").trim())
+      .filter(Boolean)
+  );
+}
+
+function mapNetworking(rows) {
+  if (!rows.length) return [];
+  const h = rows[0];
+  const iName = pickCol(h, ["name"]);
+  const iCountry = pickCol(h, ["country"]);
+  const iPhoto = pickCol(h, ["photo"]);
+  const iContact = pickCol(h, ["contact"]);
+  const iSocials = pickCol(h, ["socials", "social"]);
+  const iComment = pickCol(h, ["comment"]);
+  const iTags = pickCol(h, ["hashtags", "hashtag", "tags"]);
+  const iBio = pickCol(h, ["bio"]);
+  const iInstDesc = pickCol(h, ["institution description"]);
+  const iLink = pickCol(h, ["institution link"]);
+  if (iName < 0) throw new Error("networking: no Name column");
+  const out = [];
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r];
+    const n = clean(row[iName]);
+    if (!n) continue;
+    if (NET_SKIP_NAMES.has(n.toLowerCase())) continue;
+    const country = iCountry >= 0 ? clean(row[iCountry]) : "";
+    out.push({
+      n,
+      ph: iPhoto >= 0 ? normalizePhotoUrl(row[iPhoto]) : "",
+      phRaw: iPhoto >= 0 ? clean(row[iPhoto]) : "",
+      c: iContact >= 0 ? clean(row[iContact]) : "",
+      r: "",
+      i: country,
+      country,
+      instDesc: iInstDesc >= 0 ? clean(row[iInstDesc]) : "",
+      fr: "",
+      b: iBio >= 0 ? clean(row[iBio]).slice(0, 500) : "",
+      t: "",
+      l: iLink >= 0 ? clean(row[iLink]) : "",
+      socials: iSocials >= 0 ? clean(row[iSocials]) : "",
+      comment: iComment >= 0 ? clean(row[iComment]) : "",
+      tags: iTags >= 0 ? parseHashtags(row[iTags]) : [],
+    });
+  }
+  return out;
+}
+
+function mergeNetPerson(np, people) {
+  const i = findPersonByName(people, np.n);
+  const p = i >= 0 ? people[i] : null;
+  return {
+    n: np.n,
+    ph: np.ph || p?.ph || "",
+    phRaw: np.phRaw || p?.phRaw || "",
+    c: np.c || p?.c || "",
+    r: p?.r || "",
+    i: np.i || p?.i || "",
+    country: np.country || p?.country || "",
+    instDesc: np.instDesc || p?.instDesc || "",
+    fr: p?.fr || "",
+    b: np.b || p?.b || "",
+    t: p?.t || "",
+    l: np.l || p?.l || "",
+    socials: np.socials || "",
+    comment: np.comment || "",
+    tags: np.tags || [],
+  };
+}
+
+function uniqueHashtags(net) {
+  const set = new Set();
+  for (const p of net) for (const tag of p.tags || []) set.add(tag);
+  return [...set].sort((a, b) => a.localeCompare(b));
 }
 
 function mapMeet(rows) {
@@ -261,18 +426,28 @@ async function loadData(env, { force = false } = {}) {
     return CACHE.data;
   }
   const id = sheetId(env);
-  const [peopleTxt, meetTxt, schedTxt] = await Promise.all([
-    fetchSheetCsv(id, "people"),
-    fetchSheetCsv(id, "meet"),
-    fetchSheetCsv(id, "schedule"),
+  const [peopleRows, meetRows, schedRows, netRows] = await Promise.all([
+    fetchFirstSheet(id, SHEET_TABS.people, (rows) =>
+      headerHas(rows, ["name"]) && (headerHas(rows, ["role"]) || headerHas(rows, ["festival role"]))
+    ),
+    fetchFirstSheet(id, SHEET_TABS.meet, (rows) =>
+      headerHas(rows, ["name"]) && (headerHas(rows, ["date"]) || headerHas(rows, ["where to meet"]))
+    ),
+    fetchFirstSheet(id, SHEET_TABS.sched, (rows) =>
+      headerHas(rows, ["event_name"]) || headerHas(rows, ["event name"])
+    ),
+    fetchFirstSheet(id, SHEET_TABS.net, (rows) =>
+      headerHas(rows, ["hashtags"]) || headerHas(rows, ["socials"])
+    ).catch(() => []),
   ]);
-  const meet = mapMeet(parseCsv(meetTxt));
-  const sched = mapSched(parseCsv(schedTxt));
+  const meet = mapMeet(meetRows);
+  const sched = mapSched(schedRows);
   enrichMeetLinks(meet, eventLinkMap(sched));
   const data = {
-    people: mapPeople(parseCsv(peopleTxt)),
+    people: mapPeople(peopleRows),
     meet,
     sched,
+    net: mapNetworking(netRows),
   };
   if (!data.people.length) throw new Error("people sheet is empty");
   CACHE = { data, loadedAt: Date.now(), source: id };
@@ -288,6 +463,7 @@ function homeKeyboard() {
       [{ text: t("btn_by_topic"), callback_data: "ms:topic_menu" }],
       [{ text: t("btn_by_event"), callback_data: "ms:event_menu" }],
       [{ text: t("btn_schedule"), callback_data: "schedule:menu" }],
+      [{ text: t("btn_networking"), callback_data: "nw:menu" }],
       [{ text: t("btn_settings"), callback_data: "settings:menu" }],
       [{ text: t("btn_restart"), callback_data: "restart:bot" }],
     ],
@@ -401,18 +577,37 @@ function formatPersonEvents(p, meet, linkMap) {
     .join("\n");
 }
 
+function fmtMaybeLink(raw) {
+  const s = clean(raw);
+  if (!s) return "";
+  if (/^https?:\/\//i.test(s)) {
+    const safe = s.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+    return `<a href="${safe}">${escHtml(s)}</a>`;
+  }
+  return escHtml(s);
+}
+
 function personCard(p, meet = [], sched = []) {
   const linkMap = eventLinkMap(sched);
   const blocks = [];
   if (p.n) blocks.push(escHtml(p.n));
   if (p.r) blocks.push(escHtml(p.r));
+  if (p.country) blocks.push(escHtml(p.country));
   const events = formatPersonEvents(p, meet, linkMap);
   if (events) blocks.push(events);
   if (p.b) blocks.push(t("person_bio", { value: escHtml(p.b) }));
   if (p.t) blocks.push(t("person_tip", { value: escHtml(p.t) }));
-  const inst = [p.i, p.l].filter(Boolean).map(escHtml);
-  if (inst.length) blocks.push(inst.join("\n"));
-  if (p.c) blocks.push(t("person_contact", { value: escHtml(p.c) }));
+  if (p.comment) blocks.push(t("person_comment", { value: escHtml(p.comment) }));
+  if (p.tags && p.tags.length) {
+    blocks.push(t("person_tags", { value: escHtml(p.tags.map((x) => `#${x}`).join(" ")) }));
+  }
+  if (p.socials) blocks.push(t("person_socials", { value: fmtMaybeLink(p.socials) }));
+  const instBits = [];
+  if (p.instDesc) instBits.push(escHtml(p.instDesc));
+  if (p.i && p.i !== p.country && p.i !== p.instDesc) instBits.push(escHtml(p.i));
+  if (p.l) instBits.push(fmtMaybeLink(p.l));
+  if (instBits.length) blocks.push(instBits.join("\n"));
+  if (p.c) blocks.push(t("person_contact", { value: fmtMaybeLink(p.c) }));
   return blocks.join("\n\n");
 }
 
@@ -843,11 +1038,12 @@ async function answerCb(env, id) {
 
 async function sendPerson(env, chatId, p, meet = [], sched = []) {
   const caption = personCard(p, meet, sched);
-  if (p.ph) {
+  const urls = photoUrlCandidates(p.phRaw || p.ph);
+  for (const url of urls) {
     if (caption.length <= 1024) {
       const photo = await tg(env, "sendPhoto", {
         chat_id: chatId,
-        photo: p.ph,
+        photo: url,
         caption,
         parse_mode: "HTML",
       });
@@ -855,7 +1051,7 @@ async function sendPerson(env, chatId, p, meet = [], sched = []) {
     } else {
       const photo = await tg(env, "sendPhoto", {
         chat_id: chatId,
-        photo: p.ph,
+        photo: url,
         caption: escHtml(p.n || "").slice(0, 1024),
         parse_mode: "HTML",
       });
@@ -879,6 +1075,40 @@ function peopleKeyboard(items, backCb) {
   return { inline_keyboard: rows };
 }
 
+function netPeopleKeyboard(items, backCb) {
+  const buttons = items.map(({ p, idx }) => ({
+    text: (p.n || t("dash")).slice(0, 30),
+    callback_data: `nw:p:${idx}`,
+  }));
+  const rows = btnRows(buttons, 2);
+  if (backCb) rows.push([{ text: t("btn_back"), callback_data: backCb }]);
+  rows.push([{ text: t("btn_back_menu"), callback_data: "back:home" }]);
+  return { inline_keyboard: rows };
+}
+
+const NET_PAGE_SIZE = 40;
+
+function netGalleryKeyboard(items, page, pagePrefix, backCb) {
+  const pages = Math.max(1, Math.ceil(items.length / NET_PAGE_SIZE));
+  const p = Math.min(Math.max(0, page | 0), pages - 1);
+  const slice = items.slice(p * NET_PAGE_SIZE, (p + 1) * NET_PAGE_SIZE);
+  const buttons = slice.map(({ name, idx, text }) => ({
+    text: (text || name || t("dash")).slice(0, 40),
+    callback_data: `nw:p:${idx}`,
+  }));
+  const rows = btnRows(buttons, 2);
+  if (pages > 1) {
+    const nav = [];
+    if (p > 0) nav.push({ text: t("btn_loc_prev"), callback_data: `${pagePrefix}:${p - 1}` });
+    nav.push({ text: t("btn_loc_page", { page: p + 1, pages }), callback_data: `${pagePrefix}:${p}` });
+    if (p < pages - 1) nav.push({ text: t("btn_loc_next"), callback_data: `${pagePrefix}:${p + 1}` });
+    rows.push(nav);
+  }
+  if (backCb) rows.push([{ text: t("btn_back"), callback_data: backCb }]);
+  rows.push([{ text: t("btn_back_menu"), callback_data: "back:home" }]);
+  return { inline_keyboard: rows, page: p, pages };
+}
+
 async function handleStart(env, chatId) {
   await sendMessage(env, chatId, t("main_menu"), homeKeyboard());
 }
@@ -887,6 +1117,18 @@ async function handleText(env, data, chatId, text) {
   const q = clean(text);
   if (!q) return;
   const mode = takePending(chatId) || "name";
+
+  if (mode === "netname") {
+    const hits = searchByName(data.net || [], q);
+    if (!hits.length) {
+      await sendMessage(env, chatId, t("name_not_found_search"), {
+        inline_keyboard: [[{ text: t("btn_back"), callback_data: "nw:name" }]],
+      });
+      return;
+    }
+    await sendMessage(env, chatId, t("name_pick_person"), netPeopleKeyboard(hits, "nw:name"));
+    return;
+  }
 
   if (mode === "event") {
     const events = allEventNames(data.meet, data.sched);
@@ -921,7 +1163,7 @@ async function handleCallback(env, data, cq) {
   await answerCb(env, cq.id);
 
   const edit = (text, markup) => editMessage(env, chatId, messageId, text, markup);
-  const { people, meet, sched } = data;
+  const { people, meet, sched, net = [] } = data;
 
   if (raw === "back:home" || raw === "home:menu" || raw === "restart:bot") {
     await edit(raw === "restart:bot" ? t("restarted") : t("main_menu"), homeKeyboard());
@@ -933,6 +1175,7 @@ async function handleCallback(env, data, cq) {
     const nPeople = data.people?.length ?? 0;
     const nMeet = data.meet?.length ?? 0;
     const nSched = data.sched?.length ?? 0;
+    const nNet = data.net?.length ?? 0;
     await edit(
       t("settings_title", {
         cacheAge: formatCacheAge(),
@@ -940,6 +1183,7 @@ async function handleCallback(env, data, cq) {
         nPeople,
         nMeet,
         nSched,
+        nNet,
       }),
       settingsKeyboard()
     );
@@ -955,6 +1199,7 @@ async function handleCallback(env, data, cq) {
           nPeople: fresh.people.length,
           nMeet: fresh.meet.length,
           nSched: fresh.sched.length,
+          nNet: fresh.net?.length ?? 0,
         }),
         settingsKeyboard()
       );
@@ -1018,6 +1263,136 @@ async function handleCallback(env, data, cq) {
     await sendPerson(env, chatId, p, meet, sched);
     await sendMessage(env, chatId, t("what_next"), {
       inline_keyboard: [[{ text: t("btn_back_menu"), callback_data: "back:home" }]],
+    });
+    return;
+  }
+
+  // ---- networking '26 ----
+  if (raw === "nw:menu") {
+    await edit(t("nw_menu_title"), {
+      inline_keyboard: [
+        [{ text: t("btn_nw_hashtags"), callback_data: "nw:tags" }],
+        [{ text: t("btn_nw_name"), callback_data: "nw:name" }],
+        [{ text: t("btn_nw_all"), callback_data: "nw:all:0" }],
+        [{ text: t("btn_back"), callback_data: "back:home" }],
+      ],
+    });
+    return;
+  }
+
+  if (raw === "nw:tags") {
+    const tags = uniqueHashtags(net);
+    if (!tags.length) {
+      await edit(t("nw_no_tags"), {
+        inline_keyboard: [[{ text: t("btn_back"), callback_data: "nw:menu" }]],
+      });
+      return;
+    }
+    const buttons = tags.map((tag, i) => ({
+      text: `#${tag}`.slice(0, 40),
+      callback_data: `nw:t:${i}:0`,
+    }));
+    const rows = btnRows(buttons, 2);
+    rows.push([{ text: t("btn_back"), callback_data: "nw:menu" }]);
+    await edit(t("nw_pick_tag"), { inline_keyboard: rows });
+    return;
+  }
+
+  if (raw.startsWith("nw:t:")) {
+    const parts = raw.split(":");
+    const ti = +parts[2];
+    const page = parts[3] != null ? +parts[3] : 0;
+    const tags = uniqueHashtags(net);
+    const tag = tags[ti];
+    if (!tag) {
+      await edit(t("nw_no_tags"), {
+        inline_keyboard: [[{ text: t("btn_back"), callback_data: "nw:tags" }]],
+      });
+      return;
+    }
+    const items = net
+      .map((p, idx) => ({ name: p.n, idx }))
+      .filter((_, idx) => (net[idx].tags || []).some((x) => x.toLowerCase() === tag.toLowerCase()))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    if (!items.length) {
+      await edit(t("nothing_found"), {
+        inline_keyboard: [[{ text: t("btn_back"), callback_data: "nw:tags" }]],
+      });
+      return;
+    }
+    const kb = netGalleryKeyboard(items, page, `nw:t:${ti}`, "nw:tags");
+    await edit(t("nw_tag_header", { tag: escHtml(tag) }), kb);
+    return;
+  }
+
+  if (raw === "nw:name") {
+    await edit(t("name_menu_title"), {
+      inline_keyboard: [
+        [{ text: t("btn_name_alpha"), callback_data: "nw:alpha" }],
+        [{ text: t("btn_name_typing"), callback_data: "nw:typing" }],
+        [{ text: t("btn_back"), callback_data: "nw:menu" }],
+      ],
+    });
+    return;
+  }
+
+  if (raw === "nw:typing") {
+    setPending(chatId, "netname");
+    await edit(t("name_typing_prompt"));
+    return;
+  }
+
+  if (raw === "nw:alpha") {
+    const letters = uniqueLetters(net);
+    const buttons = letters.map((ch) => ({ text: ch, callback_data: `nw:letter:${ch}` }));
+    const rows = btnRows(buttons, 8);
+    rows.push([{ text: t("btn_back"), callback_data: "nw:name" }]);
+    await edit(t("name_pick_letter"), { inline_keyboard: rows });
+    return;
+  }
+
+  if (raw.startsWith("nw:letter:")) {
+    const letter = raw.slice("nw:letter:".length);
+    const hits = peopleByLetter(net, letter);
+    if (!hits.length) {
+      await edit(t("name_not_found_letter"), {
+        inline_keyboard: [[{ text: t("btn_back"), callback_data: "nw:alpha" }]],
+      });
+      return;
+    }
+    await edit(t("name_letter_title", { letter }), netPeopleKeyboard(hits, "nw:alpha"));
+    return;
+  }
+
+  if (raw.startsWith("nw:all:")) {
+    const page = +raw.slice("nw:all:".length) || 0;
+    const items = net
+      .map((p, idx) => ({ name: p.n, idx }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    if (!items.length) {
+      await edit(t("nothing_found"), {
+        inline_keyboard: [[{ text: t("btn_back"), callback_data: "nw:menu" }]],
+      });
+      return;
+    }
+    const kb = netGalleryKeyboard(items, page, "nw:all", "nw:menu");
+    await edit(t("nw_all_header"), kb);
+    return;
+  }
+
+  if (raw.startsWith("nw:p:")) {
+    const idx = +raw.slice("nw:p:".length);
+    const np = net[idx];
+    if (!np) {
+      await edit(t("person_not_found"));
+      return;
+    }
+    await sendPerson(env, chatId, mergeNetPerson(np, people), meet, sched);
+    await sendMessage(env, chatId, t("what_next"), {
+      inline_keyboard: [
+        [{ text: t("btn_back_networking"), callback_data: "nw:menu" }],
+        [{ text: t("btn_back_menu"), callback_data: "back:home" }],
+      ],
     });
     return;
   }
