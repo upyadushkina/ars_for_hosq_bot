@@ -14,7 +14,7 @@ export const T = {
   btn_by_topic: "▸ по теме",
   btn_by_event: "▸ по ивенту",
   btn_schedule: "(ex.) моё расписание",
-  btn_networking: "✦ networking '26",
+  btn_networking: "✦ networking '26 ✦",
   btn_nw_hashtags: "hashtags",
   btn_nw_name: "name",
   btn_nw_all: "show all",
@@ -97,7 +97,8 @@ export const T = {
 
   nw_menu_title: "✦ networking '26 — как искать?",
   nw_pick_tag: "выбери hashtag:",
-  nw_tag_header: "#{tag}",
+  nw_tag_header: "{tag}",
+  nw_person_tags: "теги:",
   nw_all_header: "все контакты networking '26:",
   nw_no_tags: "в таблице пока нет hashtags.",
 
